@@ -36,7 +36,10 @@ services:
     restart: unless-stopped
 
   web:
-    image: docker.io/yumi118/neteasetsbot-web:v0.7.0
+    build:
+      context: .
+      dockerfile: Dockerfile.local-web
+    image: tsbot-web:v0.7.0-playlist-search
     depends_on:
       - backend
     ports:

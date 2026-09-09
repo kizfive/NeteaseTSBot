@@ -1,0 +1,2 @@
+FROM docker.io/yumi118/neteasetsbot-web:v0.7.0
+COPY web/dist /usr/share/nginx/html

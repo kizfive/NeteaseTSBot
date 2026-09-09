@@ -5299,6 +5299,11 @@ async def external_replay_history(
 
 # 网易云音乐扩展功能 API
 
+@app.get("/netease/search/playlists")
+async def netease_search_playlists(keywords: str, limit: int = 20, offset: int = 0) -> dict:
+    return await netease.search(keywords=keywords, limit=limit, offset=offset, type_=1000)
+
+
 @app.get("/netease/search/suggest")
 async def netease_search_suggest(keywords: str) -> dict:
     """搜索建议"""

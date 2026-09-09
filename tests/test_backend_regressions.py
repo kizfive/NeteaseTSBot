@@ -114,6 +114,14 @@ class LocalPatchRegressionTests(unittest.IsolatedAsyncioTestCase):
                 await main.reorder_queue(main.ReorderRequest(track_ids=[1, 2]), session)
             self.assertEqual(400, raised.exception.status_code)
 
+    async def test_netease_playlist_search_uses_playlist_result_type(self) -> None:
+        expected = {"result": {"playlists": [{"id": 1, "name": "测试歌单"}]}}
+        with patch.object(main.netease, "search", new=AsyncMock(return_value=expected)) as search:
+            result = await main.netease_search_playlists("测试", limit=12, offset=24)
+
+        self.assertEqual(expected, result)
+        search.assert_awaited_once_with(keywords="测试", limit=12, offset=24, type_=1000)
+
 
 class AdminCookieStatusTests(unittest.TestCase):
     def test_encrypted_empty_cookie_is_not_reported_as_configured(self) -> None:
