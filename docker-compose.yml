@@ -10,8 +10,6 @@ services:
       - ./data:/app/data
       - voicetmp:/app/tmp
     restart: unless-stopped
-      - ./data:/app/data
-      - voicetmp:/app/tmp
 
   backend:
     build:
