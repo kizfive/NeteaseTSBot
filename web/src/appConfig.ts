@@ -11,7 +11,7 @@ function readString(name: string, fallback: string = ''): string {
 }
 
 export const appConfig = reactive({
-  name: readString('VITE_WEB_APP_NAME', 'Notess TSBot'),
+  name: readString('VITE_WEB_APP_NAME', 'Notess TSbot'),
   iconHref: readString('VITE_WEB_APP_ICON', '/favicon.ico'),
   publicUrl: readString('VITE_WEB_PUBLIC_URL', ''),
   logLevel: readString('VITE_LOG_LEVEL', 'INFO'),
