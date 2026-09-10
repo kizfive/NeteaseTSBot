@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, nextTick } from 'vue'
+import { computed, onMounted, ref, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { onBeforeRouteLeave } from 'vue-router'
 import { apiGet } from '../api'
@@ -16,7 +16,10 @@ import {
   Plus,
   Heart,
   TrendingUp,
-  Star
+  Star,
+  Search,
+  X,
+  Loader2
 } from 'lucide-vue-next'
 import EmptyState from '../components/EmptyState.vue'
 import LoadingSpinner from '../components/LoadingSpinner.vue'
@@ -30,6 +33,12 @@ const selectedCategory = ref('全部')
 const playlists = ref<any[]>([])
 const highQualityPlaylists = ref<any[]>([])
 const recommendPlaylists = ref<any[]>([])
+const searchKeywords = ref('')
+const searchResults = ref<any[]>([])
+const searchLoading = ref(false)
+const searchPage = ref(1)
+const searchHasMore = ref(false)
+const isSearchMode = computed(() => Boolean(searchKeywords.value.trim()))
 
 const scrollEl = ref<HTMLElement | null>(null)
 const STATE_KEY = 'tsbot:state:/playlists'
@@ -86,6 +95,46 @@ async function selectCategory(cat: string) {
   await loadPlaylists(cat)
 }
 
+async function searchPlaylists(loadMore = false) {
+  const keywords = searchKeywords.value.trim()
+  if (!keywords) {
+    searchResults.value = []
+    searchHasMore.value = false
+    return
+  }
+
+  searchLoading.value = true
+  error.value = ''
+  if (!loadMore) {
+    searchPage.value = 1
+    searchResults.value = []
+  } else {
+    searchPage.value += 1
+  }
+
+  try {
+    const limit = 24
+    const offset = (searchPage.value - 1) * limit
+    const res = await apiGet<any>(`/netease/search/playlists?keywords=${encodeURIComponent(keywords)}&limit=${limit}&offset=${offset}`)
+    const items = res?.result?.playlists || []
+    searchResults.value = loadMore ? [...searchResults.value, ...items] : items
+    searchHasMore.value = searchResults.value.length < (res?.result?.playlistCount || 0) && items.length === limit
+  } catch (e: any) {
+    if (loadMore) searchPage.value -= 1
+    error.value = String(e?.message ?? e)
+  } finally {
+    searchLoading.value = false
+  }
+}
+
+function clearSearch() {
+  searchKeywords.value = ''
+  searchResults.value = []
+  searchHasMore.value = false
+  searchPage.value = 1
+  error.value = ''
+}
+
 function goToPlaylist(id: number | string) {
   saveState()
   router.push(`/playlist/${id}`)
@@ -98,12 +147,13 @@ function saveState() {
     STATE_KEY,
     JSON.stringify({
       category: selectedCategory.value,
+      query: searchKeywords.value,
       scrollTop: el.scrollTop || 0,
     }),
   )
 }
 
-function loadSavedState(): { category?: string; scrollTop?: number } {
+function loadSavedState(): { category?: string; query?: string; scrollTop?: number } {
   try {
     const raw = sessionStorage.getItem(STATE_KEY)
     if (!raw) return {}
@@ -185,10 +235,15 @@ onMounted(() => {
     const saved = loadSavedState()
     const savedCategory = typeof saved.category === 'string' && saved.category ? saved.category : '全部'
     selectedCategory.value = savedCategory
+    searchKeywords.value = typeof saved.query === 'string' ? saved.query : ''
 
     refreshFavoritePlaylistIds()
     await loadCategories()
-    await loadPlaylists(selectedCategory.value)
+    if (searchKeywords.value.trim()) {
+      await searchPlaylists()
+    } else {
+      await loadPlaylists(selectedCategory.value)
+    }
     await restoreScroll(Number(saved.scrollTop ?? 0))
   })()
 })
@@ -212,9 +267,36 @@ onMounted(() => {
           <span class="hidden sm:inline">刷新</span>
         </button>
       </div>
-      
+
+      <form class="relative mb-4 max-w-2xl" @submit.prevent="searchPlaylists()">
+        <Search :size="18" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+        <input
+          v-model="searchKeywords"
+          type="search"
+          placeholder="搜索歌单名称或创建者..."
+          class="w-full rounded-xl border border-gray-200 bg-gray-50 py-2.5 pl-10 pr-24 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100"
+        />
+        <button
+          v-if="searchKeywords"
+          type="button"
+          class="absolute right-16 top-1/2 -translate-y-1/2 rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+          aria-label="清除歌单搜索"
+          @click="clearSearch"
+        >
+          <X :size="16" />
+        </button>
+        <button
+          type="submit"
+          :disabled="searchLoading || !searchKeywords.trim()"
+          class="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Loader2 v-if="searchLoading" :size="16" class="animate-spin" />
+          <span v-else>搜索</span>
+        </button>
+      </form>
+
       <!-- Category filter -->
-      <div v-if="categories.length > 0" class="flex flex-wrap gap-2">
+      <div v-if="!isSearchMode && categories.length > 0" class="flex flex-wrap gap-2">
         <button
           @click="selectCategory('全部')"
           class="px-4 py-1.5 text-sm rounded-full transition-all duration-200 font-medium border"
@@ -258,14 +340,74 @@ onMounted(() => {
       </div>
       
       <!-- Loading state -->
-      <div v-if="loading && !playlists.length" class="h-64 flex items-center justify-center">
+      <div v-if="(loading && !playlists.length) || (searchLoading && !searchResults.length)" class="h-64 flex items-center justify-center">
         <LoadingSpinner text="正在加载歌单..." />
       </div>
       
       <!-- Content sections -->
       <div v-else class="space-y-10 max-w-[1600px] mx-auto">
+        <section v-if="isSearchMode" class="fade-in">
+          <div class="mb-5 flex items-center justify-between">
+            <h2 class="flex items-center gap-2 text-xl font-bold text-gray-900">
+              <Search :size="22" class="text-blue-600" />
+              “{{ searchKeywords.trim() }}”的搜索结果
+            </h2>
+            <span class="text-sm text-gray-500">{{ searchResults.length }} 个歌单</span>
+          </div>
+
+          <div v-if="searchResults.length" class="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 md:grid-cols-4 md:gap-6 lg:grid-cols-5 xl:grid-cols-6">
+            <div
+              v-for="playlist in searchResults"
+              :key="playlist.id"
+              class="group relative flex cursor-pointer flex-col gap-3"
+              tabindex="0"
+              @click="goToPlaylist(playlist.id)"
+              @keydown.enter="goToPlaylist(playlist.id)"
+            >
+              <div class="relative aspect-square overflow-hidden rounded-xl shadow-sm transition-all duration-300 group-hover:-translate-y-1 group-hover:shadow-xl">
+                <button
+                  class="absolute left-2 top-2 z-10 rounded-full bg-black/40 p-1.5 text-white/90 backdrop-blur-md transition-colors hover:bg-pink-50 hover:text-pink-600"
+                  :class="{ 'bg-pink-50 text-pink-600': isLocalFavPlaylist(playlist.id) }"
+                  :title="isLocalFavPlaylist(playlist.id) ? '取消本地收藏' : '本地收藏'"
+                  @click.stop="toggleLocalFavPlaylist({ id: playlist.id, name: playlist.name, coverImgUrl: playlist.coverImgUrl, playCount: playlist.playCount, creator: playlist.creator })"
+                >
+                  <Heart :size="14" :fill="isLocalFavPlaylist(playlist.id) ? 'currentColor' : 'none'" />
+                </button>
+                <img :src="playlist.coverImgUrl + '?param=300y300'" :alt="playlist.name" class="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                <div class="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-[10px] text-white backdrop-blur-md">
+                  <Play :size="10" fill="currentColor" />
+                  {{ formatPlayCount(playlist.playCount || 0) }}
+                </div>
+              </div>
+              <div class="min-w-0">
+                <h3 class="mb-1 line-clamp-2 text-sm font-bold leading-snug text-gray-900 transition-colors group-hover:text-blue-600" :title="playlist.name">
+                  {{ playlist.name }}
+                </h3>
+                <p class="flex items-center gap-1 truncate text-xs text-gray-500">
+                  <User :size="12" />
+                  {{ playlist.creator?.nickname || '未知创建者' }} · {{ playlist.trackCount || 0 }} 首
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <EmptyState
+            v-else-if="!searchLoading"
+            :icon="Search"
+            title="没有找到相关歌单"
+            description="换个歌单名称或创建者试试"
+          />
+
+          <div v-if="searchHasMore" class="mt-8 flex justify-center">
+            <button class="btn-secondary px-6" :disabled="searchLoading" @click="searchPlaylists(true)">
+              <Loader2 v-if="searchLoading" :size="16" class="animate-spin" />
+              <span v-else>加载更多</span>
+            </button>
+          </div>
+        </section>
+
         <!-- High quality playlists -->
-        <section v-if="highQualityPlaylists.length > 0" class="fade-in">
+        <section v-if="!isSearchMode && highQualityPlaylists.length > 0" class="fade-in">
           <h2 class="text-xl font-bold text-gray-900 mb-5 flex items-center gap-2">
             <Star :size="24" class="text-yellow-500 fill-yellow-500" />
             精品歌单
@@ -322,7 +464,7 @@ onMounted(() => {
         </section>
 
         <!-- Recommended playlists -->
-        <section v-if="recommendPlaylists.length > 0" class="fade-in">
+        <section v-if="!isSearchMode && recommendPlaylists.length > 0" class="fade-in">
           <h2 class="text-xl font-bold text-gray-900 mb-5 flex items-center gap-2">
             <TrendingUp :size="24" class="text-green-500" />
             推荐歌单
@@ -373,7 +515,7 @@ onMounted(() => {
         </section>
 
         <!-- All playlists -->
-        <section v-if="playlists.length > 0" class="fade-in">
+        <section v-if="!isSearchMode && playlists.length > 0" class="fade-in">
           <h2 class="text-xl font-bold text-gray-900 mb-5 flex items-center gap-2">
             <ListMusic :size="24" class="text-blue-500" />
             {{ selectedCategory }} 歌单
@@ -430,7 +572,7 @@ onMounted(() => {
 
         <!-- Empty state -->
         <EmptyState
-          v-if="!loading && playlists.length === 0 && highQualityPlaylists.length === 0 && recommendPlaylists.length === 0"
+          v-if="!isSearchMode && !loading && playlists.length === 0 && highQualityPlaylists.length === 0 && recommendPlaylists.length === 0"
           :icon="ListMusic"
           title="暂无歌单"
           description="尝试选择其他分类或刷新页面"

@@ -11,8 +11,8 @@ function readString(name: string, fallback: string = ''): string {
 }
 
 export const appConfig = reactive({
-  name: readString('VITE_WEB_APP_NAME', 'TSBot Music'),
-  iconHref: readString('VITE_WEB_APP_ICON', ''),
+  name: readString('VITE_WEB_APP_NAME', 'Notess TSBot'),
+  iconHref: readString('VITE_WEB_APP_ICON', '/favicon.ico'),
   publicUrl: readString('VITE_WEB_PUBLIC_URL', ''),
   logLevel: readString('VITE_LOG_LEVEL', 'INFO'),
 })
@@ -28,7 +28,7 @@ export async function loadAppBranding(): Promise<void> {
       if (typeof config?.app_icon === 'string') {
         appConfig.iconHref = config.app_icon.startsWith('/assets/')
           ? `${base}${config.app_icon}`
-          : config.app_icon
+          : config.app_icon || '/favicon.ico'
       }
       if (typeof config?.log_level === 'string' && config.log_level) appConfig.logLevel = config.log_level
     }
