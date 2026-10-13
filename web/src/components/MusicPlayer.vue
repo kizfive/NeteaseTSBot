@@ -351,9 +351,6 @@ const playerState = ref<PlayerState>({
 
 const error = ref('')
 const isLiked = ref(false)
-const queue = ref<Track[]>([])
-const currentTrackIndex = ref(-1)
-const shuffledQueue = ref<number[]>([])
 const neteaseQuality = ref<NeteaseQualityLevel>(getNeteaseQualityLevel())
 const showQualityMenu = ref(false)
 const qualityMenuRef = ref<HTMLElement | null>(null)
@@ -379,15 +376,15 @@ const progressPercent = computed(() => {
   return (playerState.value.currentTime / playerState.value.duration) * 100
 })
 const playbackMode = computed<PlaybackMode>(() => {
+  if (playerState.value.repeatMode === 'one') return 'repeat_one'
   if (playerState.value.isShuffled) return 'shuffle'
   if (playerState.value.repeatMode === 'all') return 'repeat_all'
-  if (playerState.value.repeatMode === 'one') return 'repeat_one'
   return 'list'
 })
 const playbackModeLabel = computed(() => {
   switch (playbackMode.value) {
     case 'shuffle':
-      return '随机'
+      return playerState.value.repeatMode === 'all' ? '随机循环' : '随机'
     case 'repeat_all':
       return '列表循环'
     case 'repeat_one':
@@ -587,9 +584,6 @@ async function seekTo(percent: number) {
 }
 
 async function setShuffleEnabled(enabled: boolean) {
-  if (enabled) {
-    generateShuffledQueue()
-  }
   await apiPost('/voice/shuffle', { enabled })
 }
 
@@ -647,33 +641,6 @@ function handleDocumentPointerDown(event: PointerEvent) {
   showQualityMenu.value = false
 }
 
-function generateShuffledQueue() {
-  if (queue.value.length === 0) return
-  
-  const indices = Array.from({ length: queue.value.length }, (_, i) => i)
-  
-  // Fisher-Yates shuffle algorithm
-  for (let i = indices.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[indices[i], indices[j]] = [indices[j], indices[i]]
-  }
-  
-  shuffledQueue.value = indices
-}
-
-
-
-async function loadQueue() {
-  try {
-    queue.value = await apiGet<Track[]>('/queue')
-    if (currentTrack.value) {
-      currentTrackIndex.value = queue.value.findIndex(t => t.id === currentTrack.value?.id)
-    }
-  } catch (e: any) {
-    // Silent fail for queue loading
-  }
-}
-
 async function toggleLike() {
   if (!currentTrack.value) return
   const liked = toggleFavoriteSong({
@@ -708,13 +675,9 @@ async function loadPlayerState() {
     if (nextTrackId && nextTrackId !== currentTrack.value?.id) {
       isLiked.value = isFavoriteSong(nextTrackId)
 
-      // Update current track index when track changes
-      if (queue.value.length > 0) {
-        currentTrackIndex.value = queue.value.findIndex(t => t.id === nextTrackId)
-      }
     }
 
-    if (state.now_playing_title) {
+    if (nextTrackId && state.now_playing_title) {
       currentTrack.value = {
         id: state.track_id || 0,
         title: state.now_playing_title,
@@ -724,11 +687,9 @@ async function loadPlayerState() {
       }
 
       isLiked.value = isFavoriteSong(Number(currentTrack.value.id || 0))
-    }
-    
-    // Handle track end and repeat logic
-    if (state.state === 'ended' || (state.state === 'stopped' && playerState.value.currentTime >= playerState.value.duration && playerState.value.duration > 0)) {
-      await handleTrackEnd()
+    } else {
+      currentTrack.value = null
+      isLiked.value = false
     }
     
     // Adaptive polling logic
@@ -770,23 +731,6 @@ function updatePollInterval(wasPlaying: boolean, previousTrackId: number | undef
   }
 }
 
-async function handleTrackEnd() {
-  try {
-    if (playerState.value.repeatMode === 'one') {
-      // Repeat current track
-      await apiPost('/voice/seek', { time: 0 })
-      await apiPost('/voice/play', {})
-    } else if (playerState.value.repeatMode === 'all' || currentTrackIndex.value < queue.value.length - 1) {
-      // Play next track or loop to beginning
-      await skipForward()
-    }
-    // If repeatMode is 'none' and we're at the end, just stop
-  } catch (e: any) {
-    error.value = String(e?.message ?? e)
-    setTimeout(() => error.value = '', 3000)
-  }
-}
-
 // Progress bar click handler
 function handleProgressClick(event: MouseEvent) {
   const progressBar = event.currentTarget as HTMLElement
@@ -797,7 +741,6 @@ function handleProgressClick(event: MouseEvent) {
 
 onMounted(() => {
   void loadPlayerState()
-  void loadQueue()
   document.addEventListener('pointerdown', handleDocumentPointerDown)
   timer = window.setInterval(() => {
     void loadPlayerState()

@@ -178,6 +178,7 @@ async def api_token_middleware(request: Request, call_next):
 _chat_task: asyncio.Task[None] | None = None
 _current_queue_item_id: int | None = None
 _pending_queue_item_id: int | None = None
+_pending_play_request_generation: int | None = None
 _current_source_url: str = ""
 _playback_lock = asyncio.Lock()
 _play_request_generation: int = 0
@@ -538,18 +539,20 @@ async def _take_now_playing_if_match(*, source_url: str) -> int | None:
 
 
 async def _begin_play_request(item_id: int | None = None) -> int:
-    global _play_request_generation, _pending_queue_item_id
+    global _play_request_generation, _pending_queue_item_id, _pending_play_request_generation
     async with _playback_lock:
         _play_request_generation += 1
         _pending_queue_item_id = item_id
+        _pending_play_request_generation = _play_request_generation
         return _play_request_generation
 
 
 async def _invalidate_play_requests() -> int:
-    global _play_request_generation, _pending_queue_item_id
+    global _play_request_generation, _pending_queue_item_id, _pending_play_request_generation
     async with _playback_lock:
         _play_request_generation += 1
         _pending_queue_item_id = None
+        _pending_play_request_generation = None
         return _play_request_generation
 
 
@@ -558,14 +561,13 @@ async def _is_play_request_current(request_generation: int) -> bool:
         return request_generation == _play_request_generation
 
 
-async def _clear_pending_queue_item_if_match(item_id: int | None) -> bool:
-    global _pending_queue_item_id
-    if item_id is None:
-        return False
+async def _clear_pending_play_request(*, request_generation: int) -> bool:
+    global _pending_queue_item_id, _pending_play_request_generation
     async with _playback_lock:
-        if _pending_queue_item_id != item_id:
+        if _pending_play_request_generation != request_generation:
             return False
         _pending_queue_item_id = None
+        _pending_play_request_generation = None
         return True
 
 
@@ -674,8 +676,6 @@ async def _hydrate_bilibili_track_metadata(
 
 
 async def _play_queue_item_internal(item_id: int, *, requested_by: str) -> bool:
-    global _current_shuffle_index
-
     session = new_session()
     play_request_generation: int | None = None
     try:
@@ -751,50 +751,63 @@ async def _play_queue_item_internal(item_id: int, *, requested_by: str) -> bool:
 
             session.add(item)
             session.commit()
+        elif item.track_id.startswith("qqmusic:"):
+            cookie = _get_admin_qqmusic_cookie(session)
+            qqmusic.set_cookie(cookie)
+            # QQ playback links expire. Refresh on every play/repeat, keeping
+            # the quality encoded by the filename of existing queue entries.
+            quality = "m4a" if "/C400" in source_url else "128" if "/M500" in source_url else "320"
+            playback_source_url = await qqmusic.get_music_url_simple(item.track_id.split(":", 1)[1], quality)
+            if not await _is_play_request_current(play_request_generation):
+                return True
+            if not playback_source_url:
+                raise HTTPException(status_code=404, detail="无法获取 QQ 音乐播放链接")
+            item.source_url = playback_source_url
+            session.commit()
         else:
             item.source_url = playback_source_url
 
-        if not await _is_play_request_current(play_request_generation):
-            return True
-
-        if _shuffle_enabled and item_id in _shuffle_queue:
-            _current_shuffle_index = _shuffle_queue.index(item_id)
-
-        await _set_now_playing_queue_item(
-            int(item.id),
-            playback_source_url,
-            duration_ms=duration_ms,
-            artist=artist,
-            album=album,
-            artwork_url=artwork_url,
+        await _start_resolved_queue_item(
+            session, item, source_url=playback_source_url, requested_by=requested_by,
+            notice=notice, request_generation=play_request_generation,
         )
-
-        if not await _is_play_request_current(play_request_generation):
-            await _take_now_playing_if_match(source_url=playback_source_url)
-            return True
-
-        await voice.play(source_url=playback_source_url, title=item.title, requested_by=requested_by, notice=notice)
-
-        if not await _is_play_request_current(play_request_generation):
-            return True
-
-        hist = HistoryItem(
-            track_id=item.track_id,
-            title=item.title,
-            artist=item.artist,
-            album=item.album,
-            duration=item.duration,
-            cover_url=item.cover_url,
-            source_url=playback_source_url,
-            requested_by=requested_by,
-        )
-        session.add(hist)
-        session.commit()
         return True
     finally:
         if play_request_generation is not None:
-            await _clear_pending_queue_item_if_match(item_id)
+            await _clear_pending_play_request(request_generation=play_request_generation)
         session.close()
+
+
+async def _start_resolved_queue_item(
+    session: Session, item: QueueItem, *, source_url: str, requested_by: str,
+    request_generation: int, notice: str = "",
+) -> None:
+    global _pending_queue_item_id
+    async with _playback_lock:
+        if request_generation != _play_request_generation:
+            return
+        _pending_queue_item_id = int(item.id)
+    if _shuffle_enabled:
+        _sync_shuffle_queue(session, cursor_id=int(item.id))
+    await _set_now_playing_queue_item(
+        int(item.id), source_url, duration_ms=item.duration,
+        artist=str(item.artist or ""), album=str(item.album or ""), artwork_url=str(item.cover_url or ""),
+    )
+    if not await _is_play_request_current(request_generation):
+        return
+    try:
+        await voice.play(source_url=source_url, title=item.title, requested_by=requested_by, notice=notice)
+    except Exception:
+        if await _is_play_request_current(request_generation):
+            await _take_now_playing_if_match(source_url=source_url)
+        raise
+    if not await _is_play_request_current(request_generation):
+        return
+    session.add(HistoryItem(
+        track_id=item.track_id, title=item.title, artist=item.artist, album=item.album,
+        duration=item.duration, cover_url=item.cover_url, source_url=source_url, requested_by=requested_by,
+    ))
+    session.commit()
 
 
 async def _delete_queue_item(item_id: int) -> None:
@@ -850,87 +863,72 @@ async def _clear_queue_internal(session: Session) -> dict:
 _remove_queue_item_internal = _delete_queue_item
 
 
-async def _auto_play_next_from_queue(*, start_after_id: int | None = None) -> None:
+def _sync_shuffle_queue(session: Session, *, cursor_id: int | None = None) -> None:
     global _current_shuffle_index, _shuffle_queue
-    
-    session = new_session()
-    try:
-        if _shuffle_enabled:
-            # Queue items can be added after shuffle mode was enabled. Keep the
-            # shuffled order in sync while preserving the existing random order.
-            queued_ids = [
-                int(row.id)
-                for row in session.execute(select(QueueItem).order_by(QueueItem.id.asc())).scalars().all()
-            ]
-            queued_id_set = set(queued_ids)
-            current_shuffle_id = (
-                _shuffle_queue[_current_shuffle_index]
-                if 0 <= _current_shuffle_index < len(_shuffle_queue)
-                else None
-            )
-            _shuffle_queue[:] = [item_id for item_id in _shuffle_queue if item_id in queued_id_set]
-            if current_shuffle_id is not None and current_shuffle_id in _shuffle_queue:
-                _current_shuffle_index = _shuffle_queue.index(current_shuffle_id)
-            elif current_shuffle_id is not None:
-                _current_shuffle_index = -1
-            missing_ids = [item_id for item_id in queued_ids if item_id not in _shuffle_queue]
-            if missing_ids:
-                random.shuffle(missing_ids)
-                _shuffle_queue.extend(missing_ids)
-            if not _shuffle_queue:
-                return
 
-            # Play next shuffled track
-            next_index = _current_shuffle_index + 1
-            
-            if next_index >= len(_shuffle_queue):
-                if _repeat_mode == "all":
-                    next_index = 0
-                else:
-                    return  # End of shuffled queue
-            
-            item_id = _shuffle_queue[next_index]
-            _current_shuffle_index = next_index
-        else:
-            # Regular queue order
-            cursor_id = start_after_id if start_after_id is not None else _current_queue_item_id
-            if start_after_id is None and _current_queue_item_id and _repeat_mode == "one":
-                # Repeat current track
-                item_id = _current_queue_item_id
+    queued_ids = list(session.execute(select(QueueItem.id).order_by(QueueItem.id.asc())).scalars())
+    queued_id_set = set(queued_ids)
+    old_index = _shuffle_queue.index(cursor_id) if cursor_id in _shuffle_queue else _current_shuffle_index
+    surviving_prefix = [item_id for item_id in _shuffle_queue[:old_index + 1] if item_id in queued_id_set]
+    _shuffle_queue[:] = [item_id for item_id in _shuffle_queue if item_id in queued_id_set]
+    _current_shuffle_index = len(surviving_prefix) - 1
+    missing_ids = [item_id for item_id in queued_ids if item_id not in _shuffle_queue]
+    random.shuffle(missing_ids)
+    _shuffle_queue.extend(missing_ids)
+    if cursor_id in _shuffle_queue:
+        _current_shuffle_index = _shuffle_queue.index(cursor_id)
+
+
+def _select_next_queue_item(session: Session, *, cursor_id: int | None) -> int | None:
+    if _shuffle_enabled:
+        _sync_shuffle_queue(session, cursor_id=cursor_id)
+        if not _shuffle_queue:
+            return None
+        next_index = _current_shuffle_index + 1
+        if next_index >= len(_shuffle_queue):
+            # In consuming modes the current entry has already been removed.
+            # All remaining shuffled entries still need to be played once.
+            if _repeat_mode == "all" or cursor_id not in _shuffle_queue:
+                next_index = 0
             else:
-                # Get next track in regular order
-                if cursor_id:
-                    nxt = session.execute(
-                        select(QueueItem)
-                        .where(QueueItem.id > cursor_id)
-                        .order_by(QueueItem.id.asc())
-                        .limit(1)
-                    ).scalars().first()
-                else:
-                    nxt = session.execute(
-                        select(QueueItem)
-                        .order_by(QueueItem.id.asc())
-                        .limit(1)
-                    ).scalars().first()
-                
-                if not nxt:
-                    if _repeat_mode == "all":
-                        # Loop back to beginning
-                        nxt = session.execute(
-                            select(QueueItem)
-                            .order_by(QueueItem.id.asc())
-                            .limit(1)
-                        ).scalars().first()
-                        if not nxt:
-                            return
-                    else:
-                        return  # End of queue
-                
-                item_id = int(nxt.id)
-    finally:
-        session.close()
+                return None
+        return _shuffle_queue[next_index]
 
-    await _play_queue_item_internal(item_id, requested_by="auto")
+    query = select(QueueItem.id).order_by(QueueItem.id.asc()).limit(1)
+    item_id = session.execute(query.where(QueueItem.id > cursor_id) if cursor_id is not None else query).scalar()
+    if item_id is None and _repeat_mode == "all":
+        item_id = session.execute(query).scalar()
+    return item_id
+
+
+async def _auto_play_next_from_queue(
+    *, start_after_id: int | None = None, requested_by: str = "auto"
+) -> None:
+    cursor_id = start_after_id if start_after_id is not None else _current_queue_item_id
+    attempted_ids: set[int] = set()
+    while True:
+        with new_session() as session:
+            item_id = _select_next_queue_item(session, cursor_id=cursor_id)
+        if item_id is None or item_id in attempted_ids:
+            return
+        attempted_ids.add(item_id)
+        generation_before_play = _play_request_generation
+        try:
+            if await _play_queue_item_internal(item_id, requested_by=requested_by):
+                return
+        except HTTPException as exc:
+            if exc.status_code not in (402, 403, 404, 410):
+                raise
+            if _play_request_generation != generation_before_play + 1:
+                return
+            await _delete_queue_item(item_id)
+            try:
+                await voice.send_notice(f"歌曲不可播放，已跳过并删除: #{item_id}", target_mode=2)
+            except Exception:
+                pass
+            if _play_request_generation != generation_before_play + 1:
+                return
+        cursor_id = item_id
 
 
 def _serialize_queue_item(row: QueueItem) -> dict:
@@ -2375,8 +2373,8 @@ async def voice_status() -> dict:
 
     return {
         "state": state,
-        "now_playing_title": st.now_playing_title,
-        "now_playing_source_url": st.now_playing_source_url,
+        "now_playing_title": st.now_playing_title if qid is not None else "",
+        "now_playing_source_url": st.now_playing_source_url if qid is not None else "",
         "now_playing_artist": now_playing_artist,
         "now_playing_album": now_playing_album,
         "artwork_url": artwork_url,
@@ -2450,73 +2448,47 @@ async def set_voice_fx(req: AudioFxUpdateRequest) -> dict:
 async def voice_play() -> dict:
     st = await voice.get_status()
     cur = str(st.state or "").strip().upper()
-    if cur == "STATE_IDLE":
-        async with _playback_lock:
-            pending_item_id = _pending_queue_item_id
-        if pending_item_id is not None:
-            return {"ok": True, "action": "pending"}
-        await _auto_play_next_from_queue()
+    async with _playback_lock:
+        has_pending_request = _pending_play_request_generation is not None
+        current_item_id = _current_queue_item_id
+    if has_pending_request:
+        return {"ok": True, "action": "pending"}
+    if cur in ("STATE_IDLE", "STATE_ERROR") or current_item_id is None:
+        if current_item_id is None or not await _play_queue_item_internal(current_item_id, requested_by="play"):
+            await _auto_play_next_from_queue()
         return {"ok": True, "action": "play_next"}
     if cur == "STATE_PAUSED":
-        await _mark_playback_resumed()
         await voice.resume()
+        await _mark_playback_resumed()
         return {"ok": True, "action": "resume"}
     return {"ok": True, "action": "noop"}
 
 
 @app.post("/voice/pause")
 async def voice_pause() -> dict:
-    await _mark_playback_paused()
     await voice.pause()
+    await _mark_playback_paused()
     return {"ok": True}
 
 
 @app.post("/voice/next")
 async def voice_next() -> dict:
-    global _current_shuffle_index, _shuffle_queue
-    current_item_id = None
-    pending_item_id = None
     async with _playback_lock:
-        current_item_id = _current_queue_item_id
-        pending_item_id = _pending_queue_item_id
-
-    active_item_id = current_item_id or pending_item_id
-
-    if active_item_id:
+        active_item_id = _pending_queue_item_id or _current_queue_item_id
+    request_generation = await _invalidate_play_requests()
+    if active_item_id and _repeat_mode == "none":
         await _remove_queue_item_internal(active_item_id)
-    await _invalidate_play_requests()
-
-    if _shuffle_enabled and _shuffle_queue:
-        # Handle shuffled next
-        next_index = _current_shuffle_index + 1
-        
-        if next_index >= len(_shuffle_queue):
-            if _repeat_mode == "all":
-                next_index = 0
-            else:
-                await _set_now_playing_queue_item(None)
-                await voice.skip()
-                return {"ok": True, "action": "end_of_queue"}
-        
-        item_id = _shuffle_queue[next_index]
-        _current_shuffle_index = next_index
-        
-        await _play_queue_item_internal(item_id, requested_by="next")
-        return {"ok": True, "action": "play_shuffled_next"}
-    else:
-        # Regular next behavior - just play next without removing current
-        start_after_id = active_item_id
-        await _set_now_playing_queue_item(None)
-        await voice.skip()
-        await _auto_play_next_from_queue(start_after_id=start_after_id)
-        return {"ok": True, "action": "next"}
+    await _set_now_playing_queue_item(None)
+    await voice.skip()
+    if not await _is_play_request_current(request_generation):
+        return {"ok": True, "action": "superseded"}
+    await _auto_play_next_from_queue(start_after_id=active_item_id, requested_by="next")
+    return {"ok": True, "action": "next"}
 
 
 @app.post("/voice/skip")
 async def voice_skip() -> dict:
     """Skip current song: remove from queue and play next"""
-    global _current_shuffle_index, _shuffle_queue
-    
     # Get current playing item to remove it
     current_item_id = None
     pending_item_id = None
@@ -2524,22 +2496,23 @@ async def voice_skip() -> dict:
         current_item_id = _current_queue_item_id
         pending_item_id = _pending_queue_item_id
 
-    active_item_id = current_item_id or pending_item_id
+    active_item_id = pending_item_id or current_item_id
+    request_generation = await _invalidate_play_requests()
     
     if active_item_id:
         # Remove current song from queue
         await _remove_queue_item_internal(active_item_id)
-        await _invalidate_play_requests()
         
         # Stop current playback
         await _set_now_playing_queue_item(None)
         await voice.skip()
+        if not await _is_play_request_current(request_generation):
+            return {"ok": True, "action": "superseded"}
         
         # Auto play next song
         await _auto_play_next_from_queue(start_after_id=active_item_id)
         return {"ok": True, "action": "skipped_and_next", "removed_track_id": active_item_id}
     else:
-        await _invalidate_play_requests()
         return {"ok": True, "action": "no_current_track", "message": "当前没有正在播放的歌曲"}
 
 
@@ -2547,9 +2520,17 @@ async def voice_skip() -> dict:
 async def voice_previous() -> dict:
     global _current_shuffle_index, _shuffle_queue
     
-    if _shuffle_enabled and _shuffle_queue:
+    async with _playback_lock:
+        cursor_item_id = _pending_queue_item_id or _current_queue_item_id
+    if cursor_item_id is None:
+        return {"ok": True, "message": "No previous track available"}
+    if _shuffle_enabled:
+        with new_session() as session:
+            _sync_shuffle_queue(session, cursor_id=cursor_item_id)
+        if not _shuffle_queue:
+            return {"ok": True, "message": "No previous track available"}
         # Handle shuffled previous
-        prev_index = _current_shuffle_index - 1
+        prev_index = _current_shuffle_index - (1 if cursor_item_id in _shuffle_queue else 0)
         
         if prev_index < 0:
             if _repeat_mode == "all":
@@ -2566,9 +2547,6 @@ async def voice_previous() -> dict:
         # Handle regular previous
         session = new_session()
         try:
-            async with _playback_lock:
-                cursor_item_id = _current_queue_item_id or _pending_queue_item_id
-
             if cursor_item_id:
                 prev = session.execute(
                     select(QueueItem)
@@ -3317,6 +3295,7 @@ async def _enqueue_netease_song(
     quality_level: str = "auto",
 ) -> tuple[int, bool]:
     session = new_session()
+    play_request_generation: int | None = None
     try:
         normalized_level = _normalize_netease_quality_level(quality_level, strict=True)
         if not play_now:
@@ -3334,6 +3313,7 @@ async def _enqueue_netease_song(
             _schedule_ts_description_update()
             return int(item.id), False
 
+        play_request_generation = await _begin_play_request()
         cookie = _get_admin_cookie(session)
         url, trial, notice, resolved_duration_ms, resolved_artist, resolved_album, resolved_artwork_url = await _resolve_netease_playback_payload(
             song_id=song_id,
@@ -3344,6 +3324,8 @@ async def _enqueue_netease_song(
             duration_ms=duration_ms,
             quality_level=normalized_level,
         )
+        if not await _is_play_request_current(play_request_generation):
+            raise HTTPException(status_code=409, detail="playback request was superseded by a newer command")
 
         final_artist = resolved_artist or artist
 
@@ -3361,30 +3343,15 @@ async def _enqueue_netease_song(
 
         _schedule_ts_description_update()
 
-        await _set_now_playing_queue_item(
-            int(item.id),
-            url,
-            duration_ms=resolved_duration_ms,
-            artist=final_artist,
-            album=resolved_album,
-            artwork_url=resolved_artwork_url,
+        await _start_resolved_queue_item(
+            session, item, source_url=url, requested_by=requested_by,
+            notice=notice, request_generation=play_request_generation,
         )
-        await voice.play(source_url=url, title=title, requested_by=requested_by, notice=notice)
-        hist = HistoryItem(
-            track_id=item.track_id,
-            title=title,
-            artist=final_artist,
-            album=resolved_album,
-            duration=resolved_duration_ms,
-            cover_url=resolved_artwork_url,
-            source_url=url,
-            requested_by=requested_by,
-        )
-        session.add(hist)
-        session.commit()
 
         return int(item.id), trial
     finally:
+        if play_request_generation is not None:
+            await _clear_pending_play_request(request_generation=play_request_generation)
         session.close()
 
 
@@ -3401,13 +3368,18 @@ async def _enqueue_qqmusic_song(
 ) -> tuple[int, bool]:
     """Enqueue a QQ Music song"""
     session = new_session()
+    play_request_generation: int | None = None
     try:
+        if play_now:
+            play_request_generation = await _begin_play_request()
         # Use admin QQ Music cookie (server-side), like netease.
         cookie = _get_admin_qqmusic_cookie(session)
         qqmusic.set_cookie(cookie)
 
         # Get music URL from QQ Music
         url = await qqmusic.get_music_url_simple(song_mid, quality)
+        if play_request_generation is not None and not await _is_play_request_current(play_request_generation):
+            raise HTTPException(status_code=409, detail="playback request was superseded by a newer command")
         if not url:
             raise HTTPException(status_code=404, detail="无法获取 QQ 音乐播放链接，可能需要 VIP 会员或该歌曲不可用")
         
@@ -3431,30 +3403,15 @@ async def _enqueue_qqmusic_song(
         _schedule_ts_description_update()
 
         if play_now:
-            await _set_now_playing_queue_item(
-                int(item.id),
-                url,
-                duration_ms=resolved_duration_ms,
-                artist=artist,
-                album="",
-                artwork_url=album_cover_url,
+            await _start_resolved_queue_item(
+                session, item, source_url=url, requested_by=requested_by,
+                request_generation=play_request_generation,
             )
-            await voice.play(source_url=url, title=title, requested_by=requested_by, notice="")
-            hist = HistoryItem(
-                track_id=item.track_id,
-                title=title,
-                artist=artist,
-                album="",
-                duration=resolved_duration_ms,
-                cover_url=album_cover_url,
-                source_url=url,
-                requested_by=requested_by,
-            )
-            session.add(hist)
-            session.commit()
 
         return int(item.id), False  # QQ Music doesn't have trial mode
     finally:
+        if play_request_generation is not None:
+            await _clear_pending_play_request(request_generation=play_request_generation)
         session.close()
 
 
@@ -3533,39 +3490,15 @@ async def _enqueue_bilibili_song(
 
         _schedule_ts_description_update()
 
-        await _set_now_playing_queue_item(
-            int(item.id),
-            source_url,
-            duration_ms=resolved_duration_ms,
-            artist=final_artist,
-            album=resolved_album,
-            artwork_url=resolved_artwork_url,
+        await _start_resolved_queue_item(
+            session, item, source_url=source_url, requested_by=requested_by,
+            request_generation=play_request_generation,
         )
-
-        if not await _is_play_request_current(play_request_generation):
-            await _take_now_playing_if_match(source_url=source_url)
-            raise HTTPException(status_code=409, detail="bilibili playback request was superseded by a newer command")
-
-        await voice.play(source_url=source_url, title=title, requested_by=requested_by, notice="")
-
-        if not await _is_play_request_current(play_request_generation):
-            raise HTTPException(status_code=409, detail="bilibili playback request was superseded by a newer command")
-
-        hist = HistoryItem(
-            track_id=item.track_id,
-            title=title,
-            artist=final_artist,
-            album=resolved_album,
-            duration=resolved_duration_ms,
-            cover_url=resolved_artwork_url,
-            source_url=source_url,
-            requested_by=requested_by,
-        )
-        session.add(hist)
-        session.commit()
 
         return int(item.id), False
     finally:
+        if play_request_generation is not None:
+            await _clear_pending_play_request(request_generation=play_request_generation)
         session.close()
 
 
@@ -3856,14 +3789,13 @@ async def _handle_chat_command(
             return
 
         if cmd == "pause":
-            await _mark_playback_paused()
-            await voice.pause()
+            await voice_pause()
             await reply("已暂停")
             return
 
         if cmd in ("resume", "continue"):
-            await _mark_playback_resumed()
             await voice.resume()
+            await _mark_playback_resumed()
             await reply("已恢复")
             return
 
@@ -3875,28 +3807,10 @@ async def _handle_chat_command(
             return
 
         if cmd == "skip":
-            # Get current playing item to remove it
-            current_item_id = None
-            pending_item_id = None
-            async with _playback_lock:
-                current_item_id = _current_queue_item_id
-                pending_item_id = _pending_queue_item_id
-            active_item_id = current_item_id or pending_item_id
-            
-            if active_item_id:
-                # Remove current song from queue
-                await _remove_queue_item_internal(active_item_id)
-                await _invalidate_play_requests()
-                
-                # Stop current playback
-                await _set_now_playing_queue_item(None)
-                await voice.skip()
-                
-                # Auto play next song
-                await _auto_play_next_from_queue(start_after_id=active_item_id)
+            result = await voice_skip()
+            if result["action"] == "skipped_and_next":
                 await reply("已跳过当前歌曲并播放下一首")
             else:
-                await _invalidate_play_requests()
                 await reply("当前没有正在播放的歌曲")
             return
 
@@ -4136,11 +4050,47 @@ async def _handle_playback_finished(source_url: str) -> None:
     item_id = await _take_now_playing_if_match(source_url=source_url)
     if item_id is None:
         return
+    async with _playback_lock:
+        has_pending_request = _pending_play_request_generation is not None
+    if has_pending_request:
+        if _repeat_mode == "none":
+            await _delete_queue_item(item_id)
+        return
     if _repeat_mode == "one":
-        await _play_queue_item_internal(item_id, requested_by="auto")
+        generation_before_play = _play_request_generation
+        try:
+            if await _play_queue_item_internal(item_id, requested_by="auto"):
+                return
+        except HTTPException as exc:
+            if exc.status_code not in (402, 403, 404, 410):
+                raise
+            if _play_request_generation != generation_before_play + 1:
+                return
+            await _delete_queue_item(item_id)
+        await _auto_play_next_from_queue(start_after_id=item_id)
+        return
+    if _repeat_mode == "all":
+        await _auto_play_next_from_queue(start_after_id=item_id)
         return
     await _delete_queue_item(item_id)
-    await _auto_play_next_from_queue()
+    await _auto_play_next_from_queue(start_after_id=item_id)
+
+
+async def _handle_playback_error(source_url: str) -> None:
+    item_id = await _take_now_playing_if_match(source_url=source_url)
+    if item_id is None:
+        return
+    request_generation = _play_request_generation
+    await _delete_queue_item(item_id)
+    try:
+        await voice.send_notice(f"播放失败，已跳过并删除: #{item_id}\n将播放下一首", target_mode=2)
+    except Exception:
+        pass
+    async with _playback_lock:
+        has_pending_request = _pending_play_request_generation is not None
+        has_current_track = _current_queue_item_id is not None
+    if not has_pending_request and not has_current_track and await _is_play_request_current(request_generation):
+        await _auto_play_next_from_queue(start_after_id=item_id)
 
 
 async def _chat_command_worker() -> None:
@@ -4181,17 +4131,7 @@ async def _chat_command_worker() -> None:
                         if ty == 2:
                             await _handle_playback_finished(src)
                         if ty == 3:
-                            item_id = await _take_now_playing_if_match(source_url=src)
-                            if item_id is not None:
-                                await _delete_queue_item(item_id)
-                                try:
-                                    await voice.send_notice(
-                                        f"播放失败，已跳过并删除: #{item_id}\n将播放下一首",
-                                        target_mode=2,
-                                    )
-                                except Exception:
-                                    pass
-                                await _auto_play_next_from_queue()
+                            await _handle_playback_error(src)
                         continue
                 except Exception:
                     logger.exception("chat worker: failed to handle event")
