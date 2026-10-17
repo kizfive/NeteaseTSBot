@@ -19,6 +19,7 @@ class VoiceStatus:
     now_playing_source_url: str
     volume_percent: int
     config_revision: str = ""
+    teamspeak_connected: bool | None = None
 
 
 @dataclass
@@ -127,6 +128,10 @@ class VoiceClient:
             now_playing_source_url=resp.now_playing_source_url,
             volume_percent=resp.volume_percent,
             config_revision=str(getattr(resp, "config_revision", "") or ""),
+            teamspeak_connected=(
+                bool(resp.teamspeak_connected)
+                if resp.HasField("teamspeak_connected") else None
+            ),
         )
 
     async def set_audio_fx(

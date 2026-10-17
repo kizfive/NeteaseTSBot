@@ -1,4 +1,5 @@
 import { getCsrfToken } from './session'
+import { DEMO_MODE } from './demoMode'
 
 const RAW_API_BASE = (import.meta as any).env?.VITE_API_BASE || '/api'
 const API_BASE = String(RAW_API_BASE).replace(/\/+$/, '')
@@ -40,6 +41,10 @@ async function requestJson<T>(
   path: string,
   init: RequestInit,
 ): Promise<T> {
+  if (DEMO_MODE) {
+    const { demoRequest } = await import('./demo/api')
+    return demoRequest(path, init) as T
+  }
   const r = await fetch(`${API_BASE}${path}`, { ...init, credentials: 'include' })
   if (!r.ok) {
     const text = await r.text()

@@ -22,6 +22,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .bilibili_cache import prune_audio_cache
+from .diagnostics import run_diagnostics
 from .bilibili_auth import (
     close_all_bilibili_qr_sessions,
     cookie_string_to_dict,
@@ -2386,6 +2387,7 @@ async def voice_status() -> dict:
         "repeat_mode": _repeat_mode,
         "voice_connected": voice_connected,
         "voice_config_revision": st.config_revision,
+        "teamspeak_connected": getattr(st, "teamspeak_connected", None),
     }
 
 
@@ -4277,6 +4279,12 @@ def auth_logout(request: Request, response: Response, session: Session = Depends
 def admin_settings(request: Request, session: Session = Depends(get_session)) -> dict:
     require_admin(request, session)
     return settings_payload(session)
+
+
+@app.get("/admin/diagnostics")
+async def admin_diagnostics(request: Request, session: Session = Depends(get_session)) -> dict:
+    require_admin(request, session)
+    return await run_diagnostics(session, voice)
 
 
 @app.put("/admin/settings")

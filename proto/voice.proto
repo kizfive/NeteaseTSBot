@@ -75,6 +75,8 @@ message StatusResponse {
   string now_playing_source_url = 3;
   int32 volume_percent = 4;
   string config_revision = 5;
+  // Optional so backends can distinguish older services from an offline connection.
+  optional bool teamspeak_connected = 6;
 }
 
 message SetAudioFxRequest {

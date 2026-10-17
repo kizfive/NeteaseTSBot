@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import MusicPlayer from './components/MusicPlayer.vue'
 import { appConfig } from './appConfig'
 import { applyTheme, getInitialTheme } from './theme'
+import { DEMO_MODE } from './demoMode'
+import { PROJECT_URL, ISSUE_URL, CONTRIBUTE_URL, INSTALL_URL } from './projectLinks'
 import { 
   Home, 
   Music,
@@ -16,15 +18,24 @@ import {
   Moon,
   Sun,
   Menu,
-  X
+  X,
+  MessageSquare,
+  GitPullRequest,
+  Compass
 } from 'lucide-vue-next'
 
 const sidebarOpen = ref(false)
+const desktopQuery = window.matchMedia('(min-width: 1024px)')
+const isDesktop = ref(desktopQuery.matches)
+function syncDesktop(event: MediaQueryListEvent) { isDesktop.value = event.matches }
+onMounted(() => desktopQuery.addEventListener('change', syncDesktop))
+onBeforeUnmount(() => desktopQuery.removeEventListener('change', syncDesktop))
 const appName = computed(() => appConfig.name)
 const themeMode = ref<'light' | 'dark'>(getInitialTheme())
 const isDarkMode = computed(() => themeMode.value === 'dark')
 
 const route = useRoute()
+watch(() => route.fullPath, () => { sidebarOpen.value = false })
 const isLyricsRoute = computed(() => route.name === 'lyrics' || route.path.startsWith('/lyrics'))
 const isAuthRoute = computed(() => Boolean(route.meta.authPage))
 
@@ -39,9 +50,10 @@ function toggleTheme() {
 </script>
 
 <template>
-  <div :class="['app-shell min-h-screen transition-colors duration-300', isLyricsRoute ? 'bg-black h-[100dvh] overflow-hidden' : isAuthRoute ? 'bg-gray-50' : 'bg-gray-50 pb-24']">
+  <div :class="['app-shell min-h-screen transition-colors duration-300', isLyricsRoute ? 'bg-black h-[100dvh] overflow-hidden' : 'bg-gray-50']">
     <RouterView v-if="isAuthRoute" />
     <template v-if="isLyricsRoute">
+      <div v-if="DEMO_MODE" class="pointer-events-none fixed top-3 right-4 z-50 rounded-full bg-black/50 px-3 py-1 text-xs text-white">在线体验 · 不播放真实音频</div>
       <div class="h-full relative z-0">
         <RouterView v-slot="{ Component, route: currentRoute }">
           <Transition name="route-shell" mode="out-in">
@@ -63,6 +75,8 @@ function toggleTheme() {
       
       <!-- Sidebar -->
       <aside 
+        :inert="!isDesktop && !sidebarOpen"
+        :aria-hidden="!isDesktop && !sidebarOpen"
         :class="[
           'theme-sidebar-shell fixed top-0 left-0 h-full w-64 bg-white/95 backdrop-blur-sm border-r border-gray-200 z-50 transform transition-transform duration-300 ease-out shadow-[4px_0_24px_rgba(0,0,0,0.02)]',
           sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
@@ -79,6 +93,7 @@ function toggleTheme() {
             </div>
             <button 
               @click="toggleSidebar"
+              aria-label="关闭导航"
               class="lg:hidden p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
             >
               <X :size="20" />
@@ -97,6 +112,11 @@ function toggleTheme() {
               >
                 <Search :size="20" />
                 <span>搜索</span>
+              </RouterLink>
+
+              <RouterLink to="/setup" class="nav-item" active-class="nav-item-active" @click="sidebarOpen = false">
+                <Compass :size="20" />
+                <span>部署向导</span>
               </RouterLink>
               
               <RouterLink 
@@ -165,12 +185,13 @@ function toggleTheme() {
       </aside>
       
       <!-- Main content -->
-      <div class="lg:ml-64 flex flex-col h-[100dvh]">
+      <div class="lg:ml-64 flex flex-col h-[100dvh] pb-24">
         <!-- Top bar -->
         <header class="theme-topbar-shell bg-white border-b border-gray-200 px-4 md:px-6 py-3 md:py-4 flex-shrink-0 flex items-center justify-between">
           <div class="flex items-center gap-4">
             <button 
               @click="toggleSidebar"
+              aria-label="打开导航"
               class="lg:hidden p-2 text-gray-500 hover:text-gray-700 -ml-2"
             >
               <Menu :size="20" />
@@ -179,13 +200,20 @@ function toggleTheme() {
           
           <div class="flex items-center gap-2">
             <a
-              href="https://github.com/yichen11818"
+              :href="PROJECT_URL"
               target="_blank"
               rel="noreferrer"
               class="theme-toolbar-btn p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
-              title="GitHub 主页"
+              title="项目仓库 / Star"
+              aria-label="项目仓库 / Star"
             >
               <Github :size="20" />
+            </a>
+            <a :href="ISSUE_URL" target="_blank" rel="noopener noreferrer" class="theme-toolbar-btn p-2 text-gray-500 hover:text-blue-600 rounded-lg" title="反馈问题" aria-label="反馈问题">
+              <MessageSquare :size="20" />
+            </a>
+            <a :href="CONTRIBUTE_URL" target="_blank" rel="noopener noreferrer" class="theme-toolbar-btn p-2 text-gray-500 hover:text-blue-600 rounded-lg" title="参与贡献" aria-label="参与贡献">
+              <GitPullRequest :size="20" />
             </a>
             <button
               type="button"
@@ -208,6 +236,11 @@ function toggleTheme() {
             </RouterLink>
           </div>
         </header>
+
+        <div v-if="DEMO_MODE" role="note" class="demo-banner flex flex-wrap items-center justify-between gap-2 border-b border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-900 md:px-6">
+          <span><strong>在线体验</strong> · 模拟数据，不播放真实音频；刷新即可重置队列和设置。</span>
+          <a :href="INSTALL_URL" target="_blank" rel="noopener noreferrer" class="font-semibold underline underline-offset-2">部署到自己的频道 ↗</a>
+        </div>
         
         <!-- Content area -->
         <main class="flex-1 min-h-0 relative z-0">

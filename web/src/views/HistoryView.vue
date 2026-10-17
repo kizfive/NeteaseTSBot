@@ -42,7 +42,7 @@ async function load() {
 
 async function playTrack(track: any) {
   try {
-    await apiPost(`/history/${track.id}/replay?play_now=true`)
+    await apiPost(`/history/${track.id}/replay?play_now=true`, {})
   } catch (e: any) {
     const msg = String(e?.message ?? e)
     showActionError(`点歌失败: ${msg}`)
@@ -51,7 +51,7 @@ async function playTrack(track: any) {
 
 async function addToQueue(track: any) {
   try {
-    await apiPost(`/history/${track.id}/replay?play_now=false`)
+    await apiPost(`/history/${track.id}/replay?play_now=false`, {})
   } catch (e: any) {
     const msg = String(e?.message ?? e)
     showActionError(`添加到队列失败: ${msg}`)

@@ -7,6 +7,7 @@ import { logout } from '../auth'
 import { loadAppBranding } from '../appConfig'
 import FloatingToast from '../components/FloatingToast.vue'
 import CookieView from './CookieView.vue'
+import { DEMO_MODE } from '../demoMode'
 
 interface SettingField {
   key: string
@@ -282,10 +283,10 @@ onBeforeUnmount(() => {
             {{ applying ? '正在应用' : '应用配置' }}
           </button>
         </template>
-        <RouterLink to="/change-password" class="p-2 text-gray-500 hover:text-blue-600" title="修改管理员密码">
+        <RouterLink v-if="!DEMO_MODE" to="/change-password" class="p-2 text-gray-500 hover:text-blue-600" title="修改管理员密码">
           <KeyRound :size="19" />
         </RouterLink>
-        <button class="p-2 text-gray-500 hover:text-red-600" title="退出管理员登录" @click="signOut">
+        <button v-if="!DEMO_MODE" class="p-2 text-gray-500 hover:text-red-600" title="退出管理员登录" @click="signOut">
           <LogOut :size="19" />
         </button>
       </div>
@@ -308,12 +309,17 @@ onBeforeUnmount(() => {
         <div class="max-w-3xl mx-auto">
           <div v-if="loading" class="py-20 text-center text-gray-500">正在加载配置...</div>
           <template v-else-if="payload">
+            <RouterLink to="/setup" class="mb-6 flex items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 hover:bg-blue-100">
+              <span>首次部署或连接异常？使用部署向导逐步配置并检查连接。</span>
+              <span class="whitespace-nowrap font-semibold">打开向导 →</span>
+            </RouterLink>
             <div class="flex items-center justify-between mb-6">
               <h2 class="text-lg font-semibold text-gray-900">{{ GROUPS.find((item) => item[0] === activeGroup)?.[1] }}</h2>
               <span v-if="activeNeedsVoiceRestart" class="theme-settings-restart text-xs px-2 py-1 rounded bg-amber-50 text-amber-700 border border-amber-200">应用时自动重启 Voice</span>
             </div>
 
-            <CookieView v-if="activeGroup === 'authorization'" embedded />
+            <p v-if="DEMO_MODE && activeGroup === 'authorization'" class="text-sm text-gray-500">在线体验不提供账号登录，也不接收 Cookie、Token 或密码。部署后可在这里管理音乐平台授权。</p>
+            <CookieView v-else-if="activeGroup === 'authorization'" embedded />
 
             <section v-if="activeAssets.length" class="theme-settings-panel bg-white border border-gray-200 rounded-lg divide-y divide-gray-100 mb-6">
               <div v-for="asset in activeAssets" :key="asset.key" class="p-4 md:p-5 grid md:grid-cols-[240px_minmax(0,1fr)] gap-3 md:gap-6 items-center">
@@ -372,6 +378,7 @@ onBeforeUnmount(() => {
                       :type="revealed[field.key] ? 'text' : 'password'"
                       :placeholder="field.configured ? '留空表示保持当前值' : '尚未配置'"
                       autocomplete="new-password"
+                      :disabled="DEMO_MODE"
                       class="input-field w-full pr-10 font-mono text-sm"
                     />
                     <button type="button" class="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700" :title="revealed[field.key] ? '隐藏' : '显示'" @click="revealed[field.key] = !revealed[field.key]">

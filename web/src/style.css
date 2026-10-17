@@ -783,3 +783,15 @@
     font-size: 0.875rem;
   }
 }
+
+body.theme-dark .demo-banner {
+  background: #172554 !important;
+  color: #dbeafe !important;
+  border-color: #334b76 !important;
+}
+
+body.theme-dark .demo-banner a,
+body.theme-dark .theme-setup-shell .text-blue-600,
+body.theme-dark .theme-setup-shell .text-blue-700 {
+  color: #93c5fd !important;
+}

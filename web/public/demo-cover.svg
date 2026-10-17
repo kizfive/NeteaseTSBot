@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="640" viewBox="0 0 640 640">
+  <defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#172554"/><stop offset="1" stop-color="#2563eb"/></linearGradient></defs>
+  <path fill="url(#bg)" d="M0 0h640v640H0z"/>
+  <g fill="none" stroke="#93c5fd" stroke-width="2" opacity=".5"><circle cx="320" cy="280" r="170"/><circle cx="320" cy="280" r="125"/><circle cx="320" cy="280" r="80"/></g>
+  <g fill="#fff"><rect x="240" y="240" width="22" height="80" rx="11"/><rect x="286" y="200" width="22" height="160" rx="11"/><rect x="332" y="220" width="22" height="120" rx="11"/><rect x="378" y="250" width="22" height="60" rx="11"/></g>
+  <text x="320" y="520" text-anchor="middle" font-family="sans-serif" font-size="54" font-weight="700" fill="#fff">TSBot Sessions</text>
+  <text x="320" y="560" text-anchor="middle" font-family="sans-serif" font-size="20" letter-spacing="5" fill="#bfdbfe">INTERACTIVE DEMO</text>
+</svg>

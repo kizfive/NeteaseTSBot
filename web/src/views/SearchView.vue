@@ -23,6 +23,7 @@ import FloatingErrorToast from '../components/FloatingErrorToast.vue'
 import { getFavoriteSongKey, getFavoriteSongs, isFavoriteSong, toggleFavoriteSong } from '../utils/favorites'
 import { buildNeteaseQueuePayload } from '../utils/queue'
 import { useTransientMessage } from '../composables/useTransientMessage'
+import { DEMO_MODE } from '../demoMode'
 
 const keywords = ref('')
 const error = ref('')
@@ -360,6 +361,7 @@ function getSongAlbum(song: any): string {
 }
 
 function getSongArtwork(song: any): string {
+  if (DEMO_MODE) return `${import.meta.env.BASE_URL}demo-cover.svg`
   if (selectedPlatform.value === 'qqmusic') {
     const albumMid = String(song?.album?.pmid || song?.album?.mid || song?.albummid || '').trim()
     return albumMid ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${albumMid}.jpg` : ''
@@ -380,6 +382,7 @@ function getSongDescription(song: any): string {
 }
 
 function getSongWebpageUrl(song: any): string {
+  if (DEMO_MODE) return ''
   if (selectedPlatform.value !== 'bilibili') return ''
 
   const raw = String(song?.webpage_url || song?.arcurl || song?.url || '').trim()
@@ -491,6 +494,10 @@ onMounted(() => {
   refreshFavoriteSongIds()
   checkQQMusicConfigStatus()
   loadSearchHistory()
+  if (DEMO_MODE) {
+    keywords.value = 'TSBot'
+    void search()
+  }
 })
 </script>
 
@@ -567,6 +574,7 @@ onMounted(() => {
           <Search :size="20" class="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 group-focus-within:text-blue-500 transition-colors" />
           <input
             v-model="keywords"
+            aria-label="搜索关键词"
             type="text"
             :placeholder="getSearchPlaceholder()"
             class="w-full pl-10 pr-24 py-3 bg-gray-100/50 border border-gray-200 rounded-xl text-gray-900 focus:bg-white focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none transition-all duration-200 placeholder-gray-400 text-sm font-medium"
