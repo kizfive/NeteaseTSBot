@@ -12,7 +12,7 @@ Listen together in your TeamSpeak channel. Search and queue **Netease Cloud Musi
 
 [Get started](#start-with-prebuilt-docker-images) · [API reference](docs/API.md) · [Contribute](CONTRIBUTING.md) · [Report an issue](https://github.com/yichen11818/NeteaseTSBot/issues/new/choose) · [中文](README.md)
 
-A [static interactive demo mode](docs/DEMO.md) is available for GitHub Pages, with simulated search, queues, and lyrics. It runs without a backend and does not play real audio.
+**[Try the live demo →](https://yichen11818.github.io/NeteaseTSBot/)** Explore simulated search, queues, and lyrics without installing anything. The demo does not play real audio. [Demo deployment guide](docs/DEMO.md).
 
 ![TSBot Web console](docs/1.png)
 

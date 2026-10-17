@@ -25,7 +25,7 @@ npm --prefix web run preview:demo
 3. 在 **Actions → Demo on GitHub Pages → Run workflow** 运行，或在 `main` 上推送前端变更。
 4. 工作流通过测试、类型检查和演示构建后发布 `web/dist-demo`。部署成功时，以 Actions 返回的 `page_url` 为准，再将地址加入 README 和仓库 About。
 
-该仓库的标准项目站点预期地址为 `https://yichen11818.github.io/NeteaseTSBot/`；写入本文档不代表站点已经发布。Fork 的工作流会根据仓库名设置子目录；如果使用用户根站点或自定义域名，需要将工作流中的 `VITE_BASE_PATH` 改为 `/`。
+本仓库的[在线体验](https://yichen11818.github.io/NeteaseTSBot/)已通过 GitHub Actions 发布。Fork 的工作流会根据仓库名设置子目录；如果使用用户根站点或自定义域名，需要将工作流中的 `VITE_BASE_PATH` 改为 `/`。
 
 ## 真实部署保持独立
 

@@ -12,7 +12,7 @@
 
 [快速部署](#先把机器人跑起来) · [聊天指令](#teamspeak-聊天指令) · [API 文档](docs/API.md) · [参与贡献](CONTRIBUTING.md) · [反馈问题](https://github.com/yichen11818/NeteaseTSBot/issues/new/choose)
 
-想先体验界面？前端现已提供可部署到 GitHub Pages 的[交互演示模式](docs/DEMO.md)，无需后端即可体验模拟搜索、队列和歌词。
+**[在线体验 →](https://yichen11818.github.io/NeteaseTSBot/)** 无需安装即可体验模拟搜索、队列和歌词；不播放真实音频。[演示部署说明](docs/DEMO.md)
 
 ![TSBot Web 控制台预览](docs/1.png)
 
