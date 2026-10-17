@@ -1,4 +1,5 @@
-import { createRouter, createWebHistory, type RouteLocationNormalized } from 'vue-router'
+import { createRouter, createWebHashHistory, createWebHistory, type RouteLocationNormalized } from 'vue-router'
+import { DEMO_MODE } from './demoMode'
 import SearchView from './views/SearchView.vue'
 import LikesView from './views/LikesView.vue'
 import FavoritesView from './views/FavoritesView.vue'
@@ -13,7 +14,7 @@ import ChangePasswordView from './views/ChangePasswordView.vue'
 import { refreshAuth } from './auth'
 
 export const router = createRouter({
-  history: createWebHistory(),
+  history: DEMO_MODE ? createWebHashHistory(import.meta.env.BASE_URL) : createWebHistory(import.meta.env.BASE_URL),
   routes: [
     { path: '/', redirect: '/search' },
     { path: '/search', component: SearchView },
@@ -26,6 +27,7 @@ export const router = createRouter({
     { path: '/login', name: 'login', component: LoginView, meta: { authPage: true } },
     { path: '/change-password', name: 'change-password', component: ChangePasswordView, meta: { authPage: true, requiresAuth: true } },
     { path: '/settings', component: SettingsView, meta: { requiresAuth: true } },
+    { path: '/setup', component: () => import('./views/SetupView.vue'), meta: { requiresAuth: true } },
     { path: '/cookie', redirect: { path: '/settings', query: { group: 'authorization' } } },
     { path: '/lyrics', component: LyricsView },
   ],

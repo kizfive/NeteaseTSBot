@@ -40,6 +40,7 @@ use voicev1::voice_service_server::{VoiceService, VoiceServiceServer};
 
 static DIRECT_DESCRIPTION_UPDATE_WARNED: AtomicBool = AtomicBool::new(false);
 static CONFIG_RESTART_REQUESTED: AtomicBool = AtomicBool::new(false);
+static TEAMSPEAK_CONNECTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Default)]
 struct SharedStatus {
@@ -548,6 +549,7 @@ impl VoiceService for VoiceServiceImpl {
             now_playing_source_url: st.now_playing_source_url.clone(),
             volume_percent: st.volume_percent,
             config_revision: get_env("TSBOT_VOICE_CONFIG_REVISION", ""),
+            teamspeak_connected: Some(TEAMSPEAK_CONNECTED.load(Ordering::SeqCst)),
         }))
     }
 
@@ -1093,6 +1095,7 @@ async fn ts3_actor(
     let max_backoff = Duration::from_secs(60);
 
     'outer: loop {
+        TEAMSPEAK_CONNECTED.store(false, Ordering::SeqCst);
         if shutdown_token.is_cancelled() {
             break;
         }
@@ -1178,6 +1181,7 @@ async fn ts3_actor(
                             Some(Some(Ok(StreamItem::BookEvents(evts)))) => {
                                 if !logged_connected {
                                     logged_connected = true;
+                                    TEAMSPEAK_CONNECTED.store(true, Ordering::SeqCst);
                                     emit_log(&events_tx, 2, "ts3 connected");
 
                                     if !avatar_set_done {
@@ -1455,6 +1459,7 @@ async fn ts3_actor(
             );
         }
 
+        TEAMSPEAK_CONNECTED.store(false, Ordering::SeqCst);
         if let Err(e) = con.disconnect(DisconnectOptions::new()) {
             emit_log(&events_tx, 3, format!("ts3 disconnect failed: {e}"));
         }
@@ -1961,6 +1966,7 @@ async fn main() -> Result<()> {
             if let Err(e) = ts3_actor(ts3_audio_rx, ts3_notice_rx, ts3_cmd_rx, events_tx_clone, shutdown_token_clone).await {
                 error!(%e, "ts3 actor exited");
             }
+            TEAMSPEAK_CONNECTED.store(false, Ordering::SeqCst);
         })
     };
 

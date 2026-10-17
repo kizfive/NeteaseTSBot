@@ -14,6 +14,7 @@ import {
 import { getFavoriteSongs, isFavoriteSong, toggleFavoriteSong } from '../utils/favorites'
 import FloatingErrorToast from '../components/FloatingErrorToast.vue'
 import { useTransientMessage } from '../composables/useTransientMessage'
+import { DEMO_MODE } from '../demoMode'
 
 const USER_COOKIE_KEY = 'tsbot_user_netease_cookie'
 const LIKES_CACHE_KEY = 'tsbot_likes_cache'
@@ -107,7 +108,7 @@ async function load(forceRefresh = false) {
   
   try {
     const cookie = localStorage.getItem(USER_COOKIE_KEY) || ''
-    if (!cookie) {
+    if (!cookie && !DEMO_MODE) {
       throw new Error('需要先设置网易云音乐 Cookie')
     }
     const data = await apiGet<any>(`/netease/likes?offset=0&limit=${PAGE_SIZE}`, { 'X-Netease-Cookie': cookie })
@@ -132,7 +133,7 @@ async function loadMore() {
   error.value = ''
   try {
     const cookie = localStorage.getItem(USER_COOKIE_KEY) || ''
-    if (!cookie) {
+    if (!cookie && !DEMO_MODE) {
       throw new Error('需要先设置网易云音乐 Cookie')
     }
     const data = await apiGet<any>(`/netease/likes?offset=${offset.value}&limit=${PAGE_SIZE}`, { 'X-Netease-Cookie': cookie })

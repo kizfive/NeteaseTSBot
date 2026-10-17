@@ -1,5 +1,6 @@
 import { logger } from './utils/logger'
 import { reactive } from 'vue'
+import { apiGet } from './api'
 
 const rawEnv = (import.meta as any).env || {}
 
@@ -21,17 +22,14 @@ export async function loadAppBranding(): Promise<void> {
   const rawBase = rawEnv?.VITE_API_BASE || '/api'
   const base = String(rawBase).replace(/\/+$/, '')
   try {
-    const response = await fetch(`${base}/config/public`, { credentials: 'include' })
-    if (response.ok) {
-      const config = await response.json()
-      if (typeof config?.app_name === 'string' && config.app_name) appConfig.name = config.app_name
-      if (typeof config?.app_icon === 'string') {
-        appConfig.iconHref = config.app_icon.startsWith('/assets/')
-          ? `${base}${config.app_icon}`
-          : config.app_icon
-      }
-      if (typeof config?.log_level === 'string' && config.log_level) appConfig.logLevel = config.log_level
+    const config = await apiGet<any>('/config/public')
+    if (typeof config?.app_name === 'string' && config.app_name) appConfig.name = config.app_name
+    if (typeof config?.app_icon === 'string') {
+      appConfig.iconHref = config.app_icon.startsWith('/assets/')
+        ? `${base}${config.app_icon}`
+        : config.app_icon
     }
+    if (typeof config?.log_level === 'string' && config.log_level) appConfig.logLevel = config.log_level
   } catch {
   }
   logger.setLevelName(appConfig.logLevel)

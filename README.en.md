@@ -1,18 +1,55 @@
-# TSBot (NeteaseTSBot)
+# TSBot · TeamSpeak 3 / 6 Music Bot
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Linux-informational)
-![Python](https://img.shields.io/badge/python-3.8%2B-blue)
-![Node](https://img.shields.io/badge/node-16%2B-brightgreen)
-![Rust](https://img.shields.io/badge/rust-1.70%2B-orange)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.115.6-009688?logo=fastapi&logoColor=white)
-![Vue](https://img.shields.io/badge/Vue-3-42b883?logo=vue.js&logoColor=white)
-![Vite](https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white)
-![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)
+[![Release](https://img.shields.io/github/v/release/yichen11818/NeteaseTSBot)](https://github.com/yichen11818/NeteaseTSBot/releases/latest)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![中文 README](https://img.shields.io/badge/README-%E4%B8%AD%E6%96%87-red)](README.md)
 
-> 🎵 **TSBot (NeteaseTSBot)** is a high-performance multi-platform music bot built for **TeamSpeak (TS / TS3 / TS6)**.  
-> Supports audio parsing and playback from **Netease Cloud Music (网易云音乐)**, **QQ Music**, and **Bilibili (B站)** with an out-of-the-box Web Console.
+Listen together in your TeamSpeak channel. Search and queue **Netease Cloud Music, QQ Music, and Bilibili audio** through chat commands or a Web console.
+
+**NeteaseTSBot** supports **TeamSpeak 3 / 6**, with playback queues, lyrics, and prebuilt Docker images for self-hosting.
+
+[Get started](#start-with-prebuilt-docker-images) · [API reference](docs/API.md) · [Contribute](CONTRIBUTING.md) · [Report an issue](https://github.com/yichen11818/NeteaseTSBot/issues/new/choose) · [中文](README.md)
+
+A [static interactive demo mode](docs/DEMO.md) is available for GitHub Pages, with simulated search, queues, and lyrics. It runs without a backend and does not play real audio.
+
+![TSBot Web console](docs/1.png)
+
+## Start with prebuilt Docker images
+
+You need a Linux host, Docker Compose, and a reachable TeamSpeak 3 / 6 server. Existing installations should keep their environment file, database, and encryption key when upgrading.
+
+```bash
+git clone https://github.com/yichen11818/NeteaseTSBot.git
+cd NeteaseTSBot
+cp tsbot.env.example tsbot.env
+```
+
+Replace `TSBOT_COOKIE_KEY` in `tsbot.env` with your own random key (generate one with `openssl rand -hex 32`), then start:
+
+```bash
+docker compose -f docker-compose.prebuilt.yml up -d
+docker compose -f docker-compose.prebuilt.yml ps
+```
+
+1. Open `http://<server-address>:8080`.
+2. Read the initial password from `logs/initial-admin-password.txt` on the host, sign in as `admin`, and change the password.
+3. Set your TeamSpeak server, channel, and music sources in the Web system settings. Apply the configuration and check that the bot joins your channel.
+   First-time administrators enter the setup wizard after changing their password; it saves and applies configuration, then checks Voice, TeamSpeak, and the optional Netease API separately.
+4. Search and queue a track in the Web console, or send `help` to the bot in TeamSpeak.
+
+Netease features require your own `NeteaseCloudMusicApi` service. QQ Music and Bilibili adapters are built in. Some features require a platform login; playback depends on account permissions and platform restrictions.
+
+For troubleshooting, run `docker compose -f docker-compose.prebuilt.yml logs --tail=100 backend voice-service`. See [source installation](#quick-start-recommended) and [Docker options](#docker-deployment) for more detail.
+
+## Help build TSBot
+
+Deployment reports, reproducible bug reports, documentation, translations, and code are welcome. See the [contribution guide and starter tasks](CONTRIBUTING.md); you can work on one component at a time. Issues and pull requests in English or Chinese are welcome.
+
+If TSBot helps you, consider starring the repository. To receive release notifications, choose **Watch → Custom → Releases** on GitHub.
+
+## Features
 
 TSBot is a TeamSpeak based music bot; the `voice-service` primary client connection already supports TS6 (historical env var names remain `TSBOT_TS3_*`). It provides:
 
@@ -20,13 +57,19 @@ TSBot is a TeamSpeak based music bot; the `voice-service` primary client connect
 - **Queue and playback control** (pause/resume/next/previous, volume, shuffle/repeat, etc.)
 - **Netease music search/playlists/likes/lyrics** (via external `NeteaseCloudMusicApi`)
 - **QQ Music search/playlists/lyrics/play URLs** (built into backend; login-required features can be configured from the web console)
+- **Bilibili video search and audio playback** (built-in adapter and local audio cache; available subtitles can be displayed on the lyrics page)
 - **Web console** (Vue 3 frontend for search/queue/lyrics/settings)
+- **External integration API** (`/external/*` for search, queue, status, and playback history; see [API documentation](docs/API.md))
 
-![Preview](docs/1.png)
-![Preview](docs/2.png)
-![Preview](docs/3.png)
-![Preview](docs/4.png)
-![Preview](docs/5.png)
+<details>
+<summary>More screenshots</summary>
+
+![TSBot screenshot 2](docs/2.png)
+![TSBot screenshot 3](docs/3.png)
+![TSBot screenshot 4](docs/4.png)
+![TSBot screenshot 5](docs/5.png)
+
+</details>
 
 ## Why TSBot (Pain Points and Goals)
 
@@ -47,7 +90,7 @@ In practice, this stack often suffers from:
 TSBot redraws those boundaries:
 
 - **Voice and business logic are decoupled**: `voice-service` only handles "connect to TeamSpeak + play audio", exposing a stable gRPC control surface.
-- **Netease is a replaceable dependency**: backend talks to external `NeteaseCloudMusicApi` through `TSBOT_NETEASE_API_BASE`; future replacements/upgrades are largely isolated in backend adapters.
+- **Netease is a replaceable dependency**: backend talks to an external `NeteaseCloudMusicApi` service configured in Web system settings; future replacements/upgrades are largely isolated in backend adapters.
 - **Maintainable and evolvable architecture**: frontend/backend/voice-service can iterate independently, reducing single-point breakage.
 
 The project has 3 components:
@@ -87,7 +130,7 @@ Music source dependency notes:
 ## TeamSpeak / TS6 Support
 
 - The `voice-service` primary client connection path already supports TeamSpeak login, channel join, text messaging, and audio playback against TS3/TS6 servers.
-- For backward compatibility, env vars still use the `TSBOT_TS3_*` naming scheme, even when connecting to TS6.
+- Configure TeamSpeak connections in Web system settings. Historical `TSBOT_TS3_*` environment values are imported once when the corresponding database settings do not yet exist.
 - The code still contains an optional legacy `ServerQuery` fallback used only for old-style `client_description` updates; it is not the TS6 HTTP(S) Query interface.
 
 ## Netease Support (Optional, via `NeteaseCloudMusicApi`)
@@ -97,7 +140,7 @@ This project does **not** directly call Netease official APIs. Instead, it forwa
 - **NPM**: https://www.npmjs.com/package/NeteaseCloudMusicApi
 - **Docs**: https://neteasecloudmusicapi.js.org/#/
 
-After deployment, set `TSBOT_NETEASE_API_BASE` to the service URL (for example, `http://127.0.0.1:3000/`).
+After deployment, set the Netease API URL in Web system settings (for example, `http://127.0.0.1:3000/` for a source installation on the same host).
 
 Common deployment options (choose one, exact args follow upstream docs):
 
@@ -129,26 +172,17 @@ Copy the template and edit:
 cp tsbot.env.example tsbot.env
 ```
 
-At minimum, set:
+For a new installation, set `TSBOT_COOKIE_KEY` to your own random key. Keep the same key when upgrading so stored credentials remain readable.
 
-- `TSBOT_TS3_HOST` / `TSBOT_TS3_PORT` / `TSBOT_TS3_CHANNEL_ID` (TeamSpeak connection settings; historical `TSBOT_TS3_*` naming is retained)
-- `TSBOT_COOKIE_KEY` (used to encrypt stored admin cookies; use your own random string)
+The backend generates an initial password for `admin`, writes it to `logs/initial-admin-password.txt`, and requires a password change on first login. Configure TeamSpeak, music sources, platform logins, and external API tokens in the Web system settings, then apply the configuration. Saving settings alone does not apply them to running services.
 
-Depending on music source:
+If you lose the admin password, run this on the server from the project root (using the backend environment created below):
 
-- For Netease: set `TSBOT_NETEASE_API_BASE` to your `NeteaseCloudMusicApi` URL, for example `http://127.0.0.1:3000/`
-- For QQ Music login-required features: store the admin QQ Music cookie via the web console or `/admin/qqmusic/*` APIs
+```bash
+backend/.venv/bin/python -m backend.admin_cli reset-password
+```
 
-Optional:
-
-- `TSBOT_TS3_SERVER_PASSWORD` / `TSBOT_TS3_CHANNEL_PASSWORD` / `TSBOT_TS3_CHANNEL_PATH`
-- `TSBOT_TS3_IDENTITY` / `TSBOT_TS3_IDENTITY_FILE` / `TSBOT_TS3_AVATAR_DIR`
-- `TSBOT_ADMIN_TOKEN`: enable backend admin endpoint protection (request header `x-admin-token`)
-- `TSBOT_WEB_HOST` / `TSBOT_WEB_PORT`: frontend production preview bind host/port (used by `run-web.sh` / `nohup-start.sh`)
-- `TSBOT_WEB_API_PROXY_TARGET`: proxy target for frontend dev / preview mode (defaults to `TSBOT_HOST` / `TSBOT_PORT`)
-- `TSBOT_WEB_ALLOWED_HOSTS`: comma-separated host allowlist when you access Vite dev / preview through a domain
-- `VITE_DEV_HOST` / `VITE_DEV_PORT`: frontend dev server bind host/port
-- `VITE_API_BASE`: frontend backend base URL (recommended default `/api`, forwarded by dev / preview / Docker reverse proxy)
+The environment file retains startup settings for the database, listening addresses, Web proxy, and development ports. Old `TSBOT_TS3_*` and music-source environment values are imported only when their database settings do not exist. `TSBOT_ADMIN_TOKEN` is a legacy one-time initialization input, not an ongoing admin API credential.
 
 ### 2) Install Dependencies
 
@@ -159,6 +193,7 @@ cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+python -m playwright install chromium
 cd ..
 ```
 
@@ -255,9 +290,7 @@ The repository now includes:
 cp tsbot.env.example tsbot.env
 ```
 
-If your `NeteaseCloudMusicApi` runs on the host machine, set:
-
-- `TSBOT_NETEASE_API_BASE=http://host.docker.internal:3000/`
+If your `NeteaseCloudMusicApi` runs on the host machine, set its URL to `http://host.docker.internal:3000/` in Web system settings after startup.
 
 ### 2) Build and run
 
@@ -328,7 +361,14 @@ Backend OpenAPI docs:
 
 - `http://127.0.0.1:8009/docs`
 
-## Admin Login State (Netease / QQ Music)
+## Platform Login State (Netease / QQ Music / Bilibili)
+
+Use **System settings → Music membership login** to manage platform logins. Cookies are encrypted in the database. The old `/cookie` page redirects to this settings section.
+
+### Bilibili
+
+The built-in adapter supports video search and audio playback, with local audio caching. Administrator login is available through QR code or manual cookie entry. For subtitle fallback on videos with AI subtitles, the backend may use Playwright with the stored Bilibili login. Source installations need `python -m playwright install chromium`; the provided backend Docker image installs Chromium and its system dependencies during the image build.
+
 
 ### Netease Cookie
 
@@ -337,7 +377,7 @@ Backend encrypts and stores the "admin Netease cookie" in database (`tsbot.db`) 
 - getting more stable song URLs (avoid anonymous restrictions on some endpoints)
 - accessing features requiring login state (playlists, likes, etc.)
 
-Setup APIs (if admin token is enabled, include header `x-admin-token: <TSBOT_ADMIN_TOKEN>`):
+The Web console handles administrator authentication through `/auth/login`. Direct API clients must retain the admin session and include the session CSRF token on state-changing requests. Admin APIs include:
 
 - `POST /admin/cookie`: store cookie
 - `GET /admin/status`: check if cookie exists
@@ -352,7 +392,7 @@ Backend also encrypts and stores the "admin QQ Music cookie" in database (`tsbot
 - getting more stable QQ Music play URLs
 - accessing login-required features such as user playlists and account info
 
-Setup APIs (if admin token is enabled, include header `x-admin-token: <TSBOT_ADMIN_TOKEN>`):
+The Web console handles administrator authentication through `/auth/login`. Direct API clients must retain the admin session and include the session CSRF token on state-changing requests. Admin APIs include:
 
 - `GET /admin/qqmusic/status`: check if cookie exists
 - `POST /admin/qqmusic/cookie`: store cookie manually
@@ -404,7 +444,7 @@ See `LOGGING.md` for details (`scripts/log-viewer.sh` / `scripts/unified-logger.
   - Ensure `make voice-run` or `run-voicemake.sh` is running
 
 - **Is TS6 fully supported?**
-  - The primary client connection already supports TS6, while configuration still uses the historical `TSBOT_TS3_*` names.
+  - The primary client connection supports TS6. Configure it in Web system settings; historical `TSBOT_TS3_*` environment values are imported once for migration.
   - Legacy `TSBOT_TS3_SERVERQUERY_*` settings still map to the old ServerQuery fallback, not TS6 HTTP(S) Query.
 
 ## License

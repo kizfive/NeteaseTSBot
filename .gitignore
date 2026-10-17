@@ -35,6 +35,7 @@ yarn.lock
 voice-service/build/
 voice-service/target/
 web/dist/
+web/dist-demo/
 backend/data/
 data/uploads/
 .playwright-cli/

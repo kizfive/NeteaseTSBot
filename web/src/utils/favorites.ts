@@ -346,7 +346,7 @@ export function getFavoriteSongs(): FavoriteSong[] {
   if (!Array.isArray(arr)) return []
 
   return arr
-    .map((item) => {
+    .map((item): FavoriteSong | null => {
       const normalized = normalizeSong(item)
       if (!normalized) return null
       const favAt = Number(item?._fav_at)

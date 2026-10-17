@@ -1,25 +1,55 @@
-# TSBot (NeteaseTSBot)
+# TSBot · TeamSpeak 3 / 6 音乐机器人
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Linux-informational)
-![Python](https://img.shields.io/badge/python-3.8%2B-blue)
-![Node](https://img.shields.io/badge/node-16%2B-brightgreen)
-![Rust](https://img.shields.io/badge/rust-1.70%2B-orange)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.115.6-009688?logo=fastapi&logoColor=white)
-![Vue](https://img.shields.io/badge/Vue-3-42b883?logo=vue.js&logoColor=white)
-![Vite](https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white)
-![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)
+[![Release](https://img.shields.io/github/v/release/yichen11818/NeteaseTSBot)](https://github.com/yichen11818/NeteaseTSBot/releases/latest)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![English README](https://img.shields.io/badge/README-English-blue)](README.en.md)
 
-<p align="center">
-  <b>🌟 推荐项目 / Related Project</b><br><br>
-  <a href="https://github.com/EchoSixHIYA/WebSpeak-client-for-TeamSpeak">
-    <img src="https://gh-card.dev/repos/EchoSixHIYA/WebSpeak-client-for-TeamSpeak.svg?fullname=true" alt="WebSpeak-client-for-TeamSpeak" />
-  </a>
-</p>
+在 TeamSpeak 频道里和朋友一起听歌：通过聊天指令或 Web 控制台点播 **网易云音乐、QQ 音乐和 Bilibili 音频**。
 
-> 🎵 **TSBot (NeteaseTSBot)** 是一个专为 **TeamSpeak (TS / TS3 / TS6)** 打造的高性能多平台音乐点播机器人 (Music Bot)。  
-> 支持 **网易云音乐 (Netease Cloud Music)**、**QQ 音乐** 与 **Bilibili (B站)** 音频解析与点播播放，并配备开箱即用的 Web 控制台与一键式部署方案。
+**NeteaseTSBot** 支持 **TeamSpeak 3 / 6**，提供播放队列、歌词和 Docker 预构建镜像，可自行部署。
+
+[快速部署](#先把机器人跑起来) · [聊天指令](#teamspeak-聊天指令) · [API 文档](docs/API.md) · [参与贡献](CONTRIBUTING.md) · [反馈问题](https://github.com/yichen11818/NeteaseTSBot/issues/new/choose)
+
+想先体验界面？前端现已提供可部署到 GitHub Pages 的[交互演示模式](docs/DEMO.md)，无需后端即可体验模拟搜索、队列和歌词。
+
+![TSBot Web 控制台预览](docs/1.png)
+
+## 先把机器人跑起来
+
+需要一台 Linux 主机、Docker Compose 和可连接的 TeamSpeak 3 / 6 服务器。已有部署升级请保留原来的 `tsbot.env`、数据库和加密密钥。
+
+```bash
+git clone https://github.com/yichen11818/NeteaseTSBot.git
+cd NeteaseTSBot
+cp tsbot.env.example tsbot.env
+```
+
+在 `tsbot.env` 中把 `TSBOT_COOKIE_KEY` 改为自己的随机密钥（可用 `openssl rand -hex 32` 生成），然后使用预构建镜像启动：
+
+```bash
+docker compose -f docker-compose.prebuilt.yml up -d
+docker compose -f docker-compose.prebuilt.yml ps
+```
+
+1. 打开 `http://<服务器地址>:8080`。
+2. 在服务器的 `logs/initial-admin-password.txt` 读取初始密码，以 `admin` 登录并修改密码。
+3. 在“系统配置”填写 TeamSpeak 地址、频道和音乐源配置，点击“应用配置”，确认机器人进入频道。
+   首次登录改密后也可跟随“部署向导”完成配置，使用“应用并检查”分别检查 Voice、TeamSpeak 和音乐接口。
+4. 在 Web 搜索并加入一首歌曲，或在 TeamSpeak 发送 `帮助` 查看聊天指令。
+
+网易云功能需要自行部署 `NeteaseCloudMusicApi`；QQ 音乐和 B 站适配已内建。部分播放和账号功能需要对应平台登录态，实际可播放内容受账号权限及平台限制影响。
+
+遇到问题先查看 `docker compose -f docker-compose.prebuilt.yml logs --tail=100 backend voice-service`。更多选项见 [源码安装](#快速开始推荐)、[Docker 部署](#docker-部署) 和 [运行指南](HOWTOSTART.md)。
+
+## 一起完善 TSBot
+
+欢迎贡献部署经验、问题复现、文档、翻译和代码。第一次参与可以从 [贡献指南中的小任务](CONTRIBUTING.md#适合第一次贡献的任务--starter-tasks) 开始，无需先弄懂 Python、Vue 和 Rust 全部模块。
+
+如果 TSBot 帮到了你，欢迎 Star；想收到新版本通知，可使用 GitHub **Watch → Custom → Releases**。
+
+## 功能一览
 
 TSBot 是一个基于 TeamSpeak 的音乐机器人；`voice-service` 主客户端连接已支持 TS6（历史环境变量名仍保留 `TSBOT_TS3_*`），提供：
 
@@ -30,11 +60,16 @@ TSBot 是一个基于 TeamSpeak 的音乐机器人；`voice-service` 主客户�
 - **B 站视频搜索与音频播放**（支持搜索视频、展示简介/点赞/收藏/投币，并在播放时缓存音频；有字幕的视频可在歌词页显示字幕时间轴，支持通过管理员登录态补抓 AI 字幕）
 - **Web 控制台**（Vue3 前端，用于搜索/队列/最近播放/本地收藏/歌词，以及受管理员密码保护的完整运行配置）
 - **外部集成 API**（`/external/*` 提供统一搜索、入队、状态读取、历史读取与历史重播）
-![预览图](docs/1.png)
-![预览图](docs/2.png)
-![预览图](docs/3.png)
-![预览图](docs/4.png)
-![预览图](docs/5.png)
+
+<details>
+<summary>查看更多界面截图</summary>
+
+![TSBot 界面预览 2](docs/2.png)
+![TSBot 界面预览 3](docs/3.png)
+![TSBot 界面预览 4](docs/4.png)
+![TSBot 界面预览 5](docs/5.png)
+
+</details>
 
 
 ## Why TSBot（痛点与目标）
@@ -489,6 +524,10 @@ B 站后台授权支持扫码登录或手动 Cookie，用于登录态接口和 A
 - **TS6 是不是已经完全支持？**
   - 当前主客户端连接已支持 TS6，连接参数仍沿用 `TSBOT_TS3_*` 命名。
   - 但 legacy `TSBOT_TS3_SERVERQUERY_*` 仍是旧式 ServerQuery fallback，不是 TS6 的 HTTP(S) Query。
+
+## 相关项目
+
+- [WebSpeak-client-for-TeamSpeak](https://github.com/EchoSixHIYA/WebSpeak-client-for-TeamSpeak)
 
 ## License
 

@@ -68,6 +68,10 @@ export default defineConfig(({ mode }) => {
   const allowedHosts = allowedHostsSet.size ? Array.from(allowedHostsSet) : undefined
 
   return {
+    base: env.VITE_BASE_PATH || '/',
+    build: {
+      outDir: mode === 'demo' ? 'dist-demo' : 'dist',
+    },
     plugins: [vue()],
     server: {
       host: normalizeServerHost(env.VITE_DEV_HOST, '127.0.0.1'),

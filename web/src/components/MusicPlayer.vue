@@ -93,6 +93,7 @@
             
             <button 
               @click="skipBackward"
+              aria-label="上一首"
               class="p-1.5 sm:p-2 text-gray-700 hover:text-blue-600 transition-colors hover:bg-gray-100 rounded-full"
             >
               <SkipBack :size="20" class="sm:w-[22px] sm:h-[22px]" fill="currentColor" />
@@ -100,6 +101,7 @@
             
             <button 
               @click="togglePlayPause"
+              :aria-label="playerState.isPlaying ? '暂停' : '播放'"
               class="p-2 sm:p-3 bg-gray-900 hover:bg-gray-800 text-white rounded-full transition-all duration-200 shadow-md hover:shadow-lg hover:scale-105 active:scale-95 flex items-center justify-center w-10 h-10 sm:w-12 sm:h-12"
             >
               <Play v-if="!playerState.isPlaying" :size="18" class="sm:w-5 sm:h-5 ml-0.5" fill="currentColor" />
@@ -108,6 +110,7 @@
             
             <button 
               @click="skipForward"
+              aria-label="下一首"
               class="p-1.5 sm:p-2 text-gray-700 hover:text-blue-600 transition-colors hover:bg-gray-100 rounded-full"
             >
               <SkipForward :size="20" class="sm:w-[22px] sm:h-[22px]" fill="currentColor" />
