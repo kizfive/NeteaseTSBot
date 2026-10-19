@@ -1,6 +1,6 @@
 services:
   voice-service:
-    image: docker.io/yumi118/neteasetsbot-voice-service:v0.7.0
+    image: docker.io/yumi118/neteasetsbot-voice-service:sha-0b69527
     env_file:
       - tsbot.env
     ports:
@@ -15,7 +15,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.local-backend
-    image: tsbot-backend:v0.7.0-patched
+    image: tsbot-backend:v0.7.1-latest-patched
     env_file:
       - tsbot.env
     environment:
@@ -39,7 +39,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.local-web
-    image: tsbot-web:v0.7.0-playlist-search
+    image: tsbot-web:v0.7.1-latest-playlist-search
     depends_on:
       - backend
     ports:

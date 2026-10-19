@@ -1,2 +1,2 @@
-FROM docker.io/yumi118/neteasetsbot-backend:v0.7.0
+FROM docker.io/yumi118/neteasetsbot-backend:sha-0b69527
 COPY backend/main.py backend/config.py backend/runtime_config.py /app/backend/
