@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
 from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from backend import main
 from backend.db import Base
@@ -846,6 +846,69 @@ class VoiceStatusFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["voice_connected"])
         self.assertEqual("idle", result["state"])
         self.assertEqual("", result["now_playing_title"])
+
+
+class QueueReorderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reorder_later_track_before_current_remaps_queue_state(self) -> None:
+        engine = create_engine("sqlite://")
+        self.addCleanup(engine.dispose)
+        Base.metadata.create_all(engine)
+
+        with Session(engine) as session:
+            session.add_all(
+                [
+                    QueueItem(id=1, track_id="a", title="A", source_url="a"),
+                    QueueItem(id=2, track_id="b", title="B", source_url="b"),
+                    QueueItem(id=5, track_id="c", title="C", source_url="c"),
+                ]
+            )
+            session.commit()
+
+            with (
+                patch.object(main, "_schedule_ts_description_update"),
+                patch.multiple(
+                    main,
+                    _current_queue_item_id=1,
+                    _pending_queue_item_id=5,
+                    _shuffle_enabled=True,
+                    _shuffle_queue=[1, 5, 2],
+                    _current_shuffle_index=0,
+                    _playback_lock=asyncio.Lock(),
+                ),
+            ):
+                result = await main.reorder_queue(
+                    main.QueueReorderRequest(track_ids=[5, 1, 2]), session
+                )
+
+                rows = session.execute(select(QueueItem).order_by(QueueItem.id)).scalars().all()
+                self.assertEqual(["C", "A", "B"], [row.title for row in rows])
+                self.assertEqual(2, main._current_queue_item_id)
+                self.assertEqual(1, main._pending_queue_item_id)
+                self.assertEqual([2, 1, 3], main._shuffle_queue)
+                self.assertEqual(0, main._current_shuffle_index)
+                self.assertEqual(2, result["current_queue_item_id"])
+
+    async def test_reorder_rejects_incomplete_or_duplicate_track_ids(self) -> None:
+        engine = create_engine("sqlite://")
+        self.addCleanup(engine.dispose)
+        Base.metadata.create_all(engine)
+
+        with Session(engine) as session:
+            session.add_all(
+                [
+                    QueueItem(id=1, track_id="a", title="A", source_url="a"),
+                    QueueItem(id=2, track_id="b", title="B", source_url="b"),
+                ]
+            )
+            session.commit()
+
+            for track_ids in ([1], [1, 1], [1, 2, 3]):
+                with self.subTest(track_ids=track_ids):
+                    with self.assertRaises(HTTPException) as raised:
+                        await main.reorder_queue(
+                            main.QueueReorderRequest(track_ids=track_ids), session
+                        )
+                    self.assertEqual(400, raised.exception.status_code)
 
 
 if __name__ == "__main__":

@@ -103,6 +103,7 @@
             v-model="tracks"
             @start="onDragStart"
             @end="onDragEnd"
+            :disabled="Boolean(searchQuery) || reordering"
             class="space-y-1"
             handle=".drag-handle"
           >
@@ -253,6 +254,7 @@ const searchQuery = ref('')
 const selectedTracks = ref<Set<number>>(new Set())
 const currentPlayingId = ref<number | null>(null)
 const isDragging = ref(false)
+const reordering = ref(false)
 let refreshTimer: number | null = null
 
 // Filter tracks based on search
@@ -275,6 +277,13 @@ async function loadTracks() {
   try {
     const next = await apiGet<Track[]>('/queue')
     applyQueueUpdate(markQueueFavorites(next))
+    try {
+      const status = await apiGet<any>('/voice/status')
+      const trackId = Number(status?.track_id || 0)
+      currentPlayingId.value = trackId > 0 ? trackId : null
+    } catch {
+      // The queue is still usable when the player status endpoint is unavailable.
+    }
   } catch (e: any) {
     error.value = String(e?.message ?? e)
   } finally {
@@ -310,11 +319,16 @@ function applyQueueUpdate(next: Track[]) {
 }
 
 async function refreshTracksSilently() {
-  try {
-    const next = await apiGet<Track[]>('/queue')
-    applyQueueUpdate(markQueueFavorites(next))
-  } catch {
-    // ignore
+  const [queueResult, statusResult] = await Promise.allSettled([
+    apiGet<Track[]>('/queue'),
+    apiGet<any>('/voice/status'),
+  ])
+  if (queueResult.status === 'fulfilled') {
+    applyQueueUpdate(markQueueFavorites(queueResult.value))
+  }
+  if (statusResult.status === 'fulfilled') {
+    const trackId = Number(statusResult.value?.track_id || 0)
+    currentPlayingId.value = trackId > 0 ? trackId : null
   }
 }
 
@@ -410,11 +424,22 @@ function onDragEnd() {
 }
 
 async function updateTrackOrder() {
+  if (reordering.value) return
+  reordering.value = true
   try {
     const trackIds = tracks.value.map(t => t.id)
-    await apiPost('/queue/reorder', { track_ids: trackIds })
+    const result = await apiPost<{ current_queue_item_id?: number | null }>('/queue/reorder', { track_ids: trackIds })
+    if (result && 'current_queue_item_id' in result) {
+      currentPlayingId.value = typeof result.current_queue_item_id === 'number'
+        ? result.current_queue_item_id
+        : null
+    }
+    await refreshTracksSilently()
   } catch (e: any) {
     showActionError(`保存顺序失败: ${String(e?.message ?? e)}`)
+    await refreshTracksSilently()
+  } finally {
+    reordering.value = false
   }
 }
 

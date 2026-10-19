@@ -18,7 +18,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from .bilibili_cache import prune_audio_cache
@@ -288,6 +288,10 @@ class ExternalQueueRequest(BaseModel):
     level: str = "auto"
     quality: str = "320"
     play_now: bool = False
+
+
+class QueueReorderRequest(BaseModel):
+    track_ids: list[int]
 
 
 class AdminLoginRequest(BaseModel):
@@ -4689,6 +4693,47 @@ async def add_queue_bilibili(req: AddBilibiliQueueRequest) -> dict:
 def get_queue(session: Session = Depends(get_session)) -> list[dict]:
     rows = session.execute(select(QueueItem).order_by(QueueItem.id.asc())).scalars().all()
     return [_serialize_queue_item(row) for row in rows]
+
+
+@app.post("/queue/reorder")
+async def reorder_queue(req: QueueReorderRequest, session: Session = Depends(get_session)) -> dict:
+    global _current_queue_item_id, _pending_queue_item_id, _shuffle_queue
+
+    current_ids = list(session.execute(select(QueueItem.id).order_by(QueueItem.id.asc())).scalars())
+    if len(req.track_ids) != len(set(req.track_ids)) or set(req.track_ids) != set(current_ids):
+        raise HTTPException(status_code=400, detail="track_ids must contain every queue item exactly once")
+
+    if current_ids:
+        # Move every row to a negative temporary id first. Updating primary keys
+        # in place would collide with rows that have not been moved yet.
+        temporary_base = max(max(current_ids), 0) + len(current_ids) + 1
+        id_map = {old_id: index for index, old_id in enumerate(req.track_ids, start=1)}
+        temporary_ids: dict[int, int] = {}
+        for index, old_id in enumerate(req.track_ids, start=1):
+            temporary_id = -(temporary_base + index)
+            temporary_ids[old_id] = temporary_id
+            session.execute(update(QueueItem).where(QueueItem.id == old_id).values(id=temporary_id))
+        session.flush()
+        for old_id, new_id in id_map.items():
+            session.execute(
+                update(QueueItem)
+                .where(QueueItem.id == temporary_ids[old_id])
+                .values(id=new_id)
+            )
+        session.commit()
+    else:
+        id_map = {}
+
+    async with _playback_lock:
+        if _current_queue_item_id in id_map:
+            _current_queue_item_id = id_map[_current_queue_item_id]
+        if _pending_queue_item_id in id_map:
+            _pending_queue_item_id = id_map[_pending_queue_item_id]
+        _shuffle_queue[:] = [id_map.get(item_id, item_id) for item_id in _shuffle_queue]
+        current_queue_item_id = _current_queue_item_id
+
+    _schedule_ts_description_update()
+    return {"ok": True, "current_queue_item_id": current_queue_item_id}
 
 
 @app.delete("/queue")
