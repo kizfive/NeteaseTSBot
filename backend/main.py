@@ -3193,15 +3193,52 @@ def _extract_playlist_search_items(raw: dict) -> list[dict[str, str]]:
             else str(creator).strip()
         ) or str(playlist.get("creatorName") or "").strip()
         track_count = str(playlist.get("trackCount") or playlist.get("track_count") or "").strip()
+        cover_img_url = str(
+            playlist.get("coverImgUrl")
+            or playlist.get("cover_img_url")
+            or playlist.get("picUrl")
+            or ""
+        ).strip()
+        play_count = str(playlist.get("playCount") or playlist.get("play_count") or "0").strip()
         items.append(
             {
                 "id": playlist_id,
                 "name": str(playlist.get("name") or playlist_id).strip(),
                 "creator": creator_name,
                 "track_count": track_count,
+                "cover_img_url": cover_img_url,
+                "play_count": play_count,
             }
         )
     return items
+
+
+def _extract_playlist_search_total(raw: dict) -> int:
+    value = (((raw or {}).get("result") or {}).get("playlistCount") or 0)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+async def _search_netease_playlists(
+    keywords: str,
+    *,
+    limit: int = 20,
+    offset: int = 0,
+) -> tuple[list[dict[str, str]], int]:
+    """Search Netease playlists using the same API path as the TS playlist command."""
+    safe_limit = max(1, min(int(limit), 50))
+    safe_offset = max(0, int(offset))
+    params: dict[str, object] = {
+        "keywords": keywords,
+        "limit": safe_limit,
+        "type_": 1000,
+    }
+    if safe_offset:
+        params["offset"] = safe_offset
+    raw = await netease.search(**params)
+    return _extract_playlist_search_items(raw), _extract_playlist_search_total(raw)
 
 
 def _extract_playlist_tracks(detail: dict) -> tuple[str, list[dict]]:
@@ -3698,8 +3735,7 @@ async def _handle_chat_command(
             if not arg:
                 await reply("用法: playlist <歌单关键词>")
                 return
-            raw = await netease.search(keywords=arg, limit=5, type_=1000)
-            playlists = _extract_playlist_search_items(raw)
+            playlists, _ = await _search_netease_playlists(arg, limit=5)
             if not playlists:
                 await reply("没有找到网易云歌单")
                 return
@@ -5209,6 +5245,15 @@ async def external_replay_history(
 
 
 # 网易云音乐扩展功能 API
+
+@app.get("/netease/search/playlists")
+async def netease_search_playlists(keywords: str, limit: int = 20, offset: int = 0) -> dict:
+    try:
+        playlists, total = await _search_netease_playlists(keywords, limit=limit, offset=offset)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    return {"playlists": playlists, "total": total}
+
 
 @app.get("/netease/search/suggest")
 async def netease_search_suggest(keywords: str) -> dict:

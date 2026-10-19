@@ -58,7 +58,7 @@ TSBot is a TeamSpeak based music bot; the `voice-service` primary client connect
 - **Netease music search/playlists/likes/lyrics** (via external `NeteaseCloudMusicApi`)
 - **QQ Music search/playlists/lyrics/play URLs** (built into backend; login-required features can be configured from the web console)
 - **Bilibili video search and audio playback** (built-in adapter and local audio cache; available subtitles can be displayed on the lyrics page)
-- **Web console** (Vue 3 frontend for search/queue/lyrics/settings)
+- **Web console** (Vue 3 frontend for song and Netease playlist search/queue/lyrics/settings)
 - **External integration API** (`/external/*` for search, queue, status, and playback history; see [API documentation](docs/API.md))
 
 <details>

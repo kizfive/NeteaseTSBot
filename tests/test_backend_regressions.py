@@ -848,5 +848,71 @@ class VoiceStatusFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("", result["now_playing_title"])
 
 
+class NeteasePlaylistSearchTests(unittest.IsolatedAsyncioTestCase):
+    def test_playlist_items_include_fields_needed_by_web_cards(self) -> None:
+        raw = {
+            "result": {
+                "playlists": [
+                    {
+                        "id": 123,
+                        "name": "测试歌单",
+                        "creator": {"nickname": "作者"},
+                        "trackCount": 12,
+                        "coverImgUrl": "https://example.com/cover.jpg",
+                        "playCount": 345,
+                    }
+                ]
+            }
+        }
+
+        items = main._extract_playlist_search_items(raw)
+
+        self.assertEqual(
+            [
+                {
+                    "id": "123",
+                    "name": "测试歌单",
+                    "creator": "作者",
+                    "track_count": "12",
+                    "cover_img_url": "https://example.com/cover.jpg",
+                    "play_count": "345",
+                }
+            ],
+            items,
+        )
+
+    async def test_search_reuses_playlist_result_type_and_returns_total(self) -> None:
+        raw = {
+            "result": {
+                "playlistCount": 42,
+                "playlists": [{"id": 1, "name": "测试歌单"}],
+            }
+        }
+        with patch.object(main.netease, "search", AsyncMock(return_value=raw)) as search:
+            items, total = await main._search_netease_playlists("测试", limit=12, offset=24)
+
+        self.assertEqual("测试歌单", items[0]["name"])
+        self.assertEqual(42, total)
+        search.assert_awaited_once_with(
+            keywords="测试",
+            limit=12,
+            offset=24,
+            type_=1000,
+        )
+
+    async def test_web_endpoint_returns_normalized_payload(self) -> None:
+        with patch.object(
+            main,
+            "_search_netease_playlists",
+            AsyncMock(return_value=([{"id": "1", "name": "测试歌单"}], 1)),
+        ):
+            result = await main.netease_search_playlists("测试", limit=12, offset=0)
+
+        self.assertEqual(
+            {"playlists": [{"id": "1", "name": "测试歌单"}], "total": 1},
+            result,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
