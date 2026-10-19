@@ -12,13 +12,14 @@ import re
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import quote, urlparse
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from .bilibili_cache import prune_audio_cache
@@ -288,6 +289,10 @@ class ExternalQueueRequest(BaseModel):
     level: str = "auto"
     quality: str = "320"
     play_now: bool = False
+
+
+class ReorderRequest(BaseModel):
+    track_ids: list[int]
 
 
 class AdminLoginRequest(BaseModel):
@@ -1195,10 +1200,10 @@ def _normalize_bilibili_artwork_url(value: object) -> str:
     if not raw:
         return ""
     if raw.startswith("//"):
-        return f"https:{raw}"
-    if raw.startswith("http://") or raw.startswith("https://"):
-        return raw
-    return f"https://{raw.lstrip('/')}"
+        raw = f"https:{raw}"
+    elif not raw.startswith(("http://", "https://")):
+        raw = f"https://{raw.lstrip('/')}"
+    return f"/api/bilibili/proxy/image?url={quote(raw, safe='')}"
 
 
 def _normalize_bilibili_subtitle_url(value: object) -> str:
@@ -4691,6 +4696,38 @@ def get_queue(session: Session = Depends(get_session)) -> list[dict]:
     return [_serialize_queue_item(row) for row in rows]
 
 
+@app.post("/queue/reorder")
+async def reorder_queue(req: ReorderRequest, session: Session = Depends(get_session)) -> dict:
+    global _current_queue_item_id, _pending_queue_item_id, _shuffle_queue
+
+    current_ids = session.execute(select(QueueItem.id).order_by(QueueItem.id.asc())).scalars().all()
+    if len(req.track_ids) != len(set(req.track_ids)) or set(req.track_ids) != set(current_ids):
+        raise HTTPException(status_code=400, detail="track_ids must contain every queue item exactly once")
+
+    temporary_ids: dict[int, int] = {}
+    temporary_base = max(current_ids, default=0) + len(current_ids) + 1
+    for index, old_id in enumerate(req.track_ids, start=1):
+        temporary_id = -(temporary_base + index)
+        temporary_ids[old_id] = temporary_id
+        session.execute(update(QueueItem).where(QueueItem.id == old_id).values(id=temporary_id))
+    session.flush()
+
+    id_map = {old_id: new_id for new_id, old_id in enumerate(req.track_ids, start=1)}
+    for old_id, temporary_id in temporary_ids.items():
+        session.execute(update(QueueItem).where(QueueItem.id == temporary_id).values(id=id_map[old_id]))
+    session.commit()
+
+    async with _playback_lock:
+        if _current_queue_item_id in id_map:
+            _current_queue_item_id = id_map[_current_queue_item_id]
+        if _pending_queue_item_id in id_map:
+            _pending_queue_item_id = id_map[_pending_queue_item_id]
+        _shuffle_queue = [id_map.get(item_id, item_id) for item_id in _shuffle_queue]
+
+    _schedule_ts_description_update()
+    return {"ok": True}
+
+
 @app.delete("/queue")
 async def clear_queue(session: Session = Depends(get_session)) -> dict:
     return await _clear_queue_internal(session)
@@ -5210,6 +5247,11 @@ async def external_replay_history(
 
 # 网易云音乐扩展功能 API
 
+@app.get("/netease/search/playlists")
+async def netease_search_playlists(keywords: str, limit: int = 20, offset: int = 0) -> dict:
+    return await netease.search(keywords=keywords, limit=limit, offset=offset, type_=1000)
+
+
 @app.get("/netease/search/suggest")
 async def netease_search_suggest(keywords: str) -> dict:
     """搜索建议"""
@@ -5346,6 +5388,38 @@ async def bilibili_search_videos(keywords: str, limit: int = 20, page: int = 1) 
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/bilibili/proxy/image")
+async def bilibili_proxy_image(url: str) -> Response:
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme not in {"http", "https"} or not (
+        hostname == "hdslb.com"
+        or hostname.endswith(".hdslb.com")
+        or hostname == "bilivideo.com"
+        or hostname.endswith(".bilivideo.com")
+    ):
+        raise HTTPException(status_code=400, detail="invalid Bilibili image URL")
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=15.0,
+            headers={"Referer": "https://www.bilibili.com/", "User-Agent": "Mozilla/5.0"},
+        ) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"image proxy failed: {exc}") from exc
+
+    content_type = response.headers.get("content-type", "image/jpeg")
+    if not content_type.lower().startswith("image/") or len(response.content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=502, detail="invalid Bilibili image response")
+    return Response(
+        content=response.content,
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @app.get("/qqmusic/search")

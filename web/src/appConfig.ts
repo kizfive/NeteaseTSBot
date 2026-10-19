@@ -1,6 +1,5 @@
 import { logger } from './utils/logger'
 import { reactive } from 'vue'
-import { apiGet } from './api'
 
 const rawEnv = (import.meta as any).env || {}
 
@@ -12,8 +11,8 @@ function readString(name: string, fallback: string = ''): string {
 }
 
 export const appConfig = reactive({
-  name: readString('VITE_WEB_APP_NAME', 'TSBot Music'),
-  iconHref: readString('VITE_WEB_APP_ICON', ''),
+  name: readString('VITE_WEB_APP_NAME', 'Notess TSbot'),
+  iconHref: readString('VITE_WEB_APP_ICON', '/favicon.svg'),
   publicUrl: readString('VITE_WEB_PUBLIC_URL', ''),
   logLevel: readString('VITE_LOG_LEVEL', 'INFO'),
 })
@@ -22,14 +21,17 @@ export async function loadAppBranding(): Promise<void> {
   const rawBase = rawEnv?.VITE_API_BASE || '/api'
   const base = String(rawBase).replace(/\/+$/, '')
   try {
-    const config = await apiGet<any>('/config/public')
-    if (typeof config?.app_name === 'string' && config.app_name) appConfig.name = config.app_name
-    if (typeof config?.app_icon === 'string') {
-      appConfig.iconHref = config.app_icon.startsWith('/assets/')
-        ? `${base}${config.app_icon}`
-        : config.app_icon
+    const response = await fetch(`${base}/config/public`, { credentials: 'include' })
+    if (response.ok) {
+      const config = await response.json()
+      if (typeof config?.app_name === 'string' && config.app_name) appConfig.name = config.app_name
+      if (typeof config?.app_icon === 'string') {
+        appConfig.iconHref = config.app_icon.startsWith('/assets/')
+          ? `${base}${config.app_icon}`
+          : config.app_icon || '/favicon.svg'
+      }
+      if (typeof config?.log_level === 'string' && config.log_level) appConfig.logLevel = config.log_level
     }
-    if (typeof config?.log_level === 'string' && config.log_level) appConfig.logLevel = config.log_level
   } catch {
   }
   logger.setLevelName(appConfig.logLevel)

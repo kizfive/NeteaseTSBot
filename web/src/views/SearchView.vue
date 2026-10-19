@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { RouterLink } from 'vue-router'
 import { apiGet, apiPost } from '../api'
 import { 
   Search, 
@@ -15,7 +16,8 @@ import {
   Star,
   Tv,
   ThumbsUp,
-  Coins
+  Coins,
+  ListMusic
 } from 'lucide-vue-next'
 import EmptyState from '../components/EmptyState.vue'
 import LoadingSpinner from '../components/LoadingSpinner.vue'
@@ -36,6 +38,7 @@ const showSuggestions = ref(false)
 const isSearchFocused = ref(false)
 const defaultKeyword = ref('')
 const selectedPlatform = ref<'netease' | 'qqmusic' | 'bilibili'>('netease')
+const searchType = ref<'songs' | 'playlists'>('songs')
 const qqMusicConfigured = ref(false)
 const { message: actionError, showMessage: showActionError } = useTransientMessage()
 
@@ -47,6 +50,26 @@ const hasMore = ref(false)
 const loadingMore = ref(false)
 
 const favoriteSongKeys = ref<Set<string>>(new Set())
+
+function selectPlatform(platform: 'netease' | 'qqmusic' | 'bilibili') {
+  if (selectedPlatform.value === platform) return
+  selectedPlatform.value = platform
+  searchType.value = 'songs'
+  songs.value = []
+  error.value = ''
+  hasMore.value = false
+  currentPage.value = 1
+}
+
+function selectSearchType(type: 'songs' | 'playlists') {
+  if (searchType.value === type) return
+  searchType.value = type
+  songs.value = []
+  error.value = ''
+  hasMore.value = false
+  currentPage.value = 1
+  if (keywords.value.trim()) void search()
+}
 
 function refreshFavoriteSongIds() {
   favoriteSongKeys.value = new Set(getFavoriteSongs().map((song) => getFavoriteSongKey(song)).filter(Boolean))
@@ -151,6 +174,14 @@ async function search(isLoadMore = false) {
       
       // QQ音乐判断是否还有更多
       hasMore.value = newSongs.length === pageSize.value
+    } else if (searchType.value === 'playlists') {
+      const offset = (currentPage.value - 1) * pageSize.value
+      const res = await apiGet<any>(`/netease/search/playlists?keywords=${encodeURIComponent(keywords.value)}&limit=${pageSize.value}&offset=${offset}`)
+      const newPlaylists = res?.result?.playlists || []
+
+      songs.value = isLoadMore ? [...songs.value, ...newPlaylists] : newPlaylists
+      const total = res?.result?.playlistCount || 0
+      hasMore.value = songs.value.length < total && newPlaylists.length === pageSize.value
     } else {
       const offset = (currentPage.value - 1) * pageSize.value
       const res = await apiGet<{ raw: any }>(`/search?keywords=${encodeURIComponent(keywords.value)}&limit=${pageSize.value}&offset=${offset}`)
@@ -457,6 +488,9 @@ function getSearchPlaceholder(): string {
   if (selectedPlatform.value === 'qqmusic') {
     return '搜索QQ音乐歌曲、歌手或专辑...'
   }
+  if (searchType.value === 'playlists') {
+    return '搜索网易云歌单名称或创建者...'
+  }
   return defaultKeyword.value ? `试试搜索: ${defaultKeyword.value}` : '搜索歌曲、艺术家或专辑...'
 }
 
@@ -516,7 +550,7 @@ onMounted(() => {
           <span class="text-sm font-medium text-gray-700">媒体平台:</span>
           <div class="flex bg-gray-100 rounded-lg p-1">
             <button
-              @click="selectedPlatform = 'netease'"
+              @click="selectPlatform('netease')"
               :class="[
                 'px-3 py-1.5 text-sm font-medium rounded-md transition-all duration-200',
                 selectedPlatform === 'netease' 
@@ -527,7 +561,7 @@ onMounted(() => {
               网易云音乐
             </button>
             <button
-              @click="selectedPlatform = 'qqmusic'"
+              @click="selectPlatform('qqmusic')"
               :class="[
                 'px-3 py-1.5 text-sm font-medium rounded-md transition-all duration-200',
                 selectedPlatform === 'qqmusic' 
@@ -538,7 +572,7 @@ onMounted(() => {
               QQ音乐
             </button>
             <button
-              @click="selectedPlatform = 'bilibili'"
+              @click="selectPlatform('bilibili')"
               :class="[
                 'px-3 py-1.5 text-sm font-medium rounded-md transition-all duration-200',
                 selectedPlatform === 'bilibili' 
@@ -565,6 +599,38 @@ onMounted(() => {
             <Settings :size="16" />
             配置QQ音乐
           </a>
+        </div>
+      </div>
+
+      <div v-if="selectedPlatform === 'netease'" class="mb-4 flex items-center gap-2">
+        <span class="text-sm font-medium text-gray-700">搜索类型:</span>
+        <div class="flex bg-gray-100 rounded-lg p-1" role="group" aria-label="网易云搜索类型">
+          <button
+            type="button"
+            @click="selectSearchType('songs')"
+            :aria-pressed="searchType === 'songs'"
+            :class="[
+              'px-3 py-1.5 text-sm font-medium rounded-md transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500',
+              searchType === 'songs'
+                ? 'bg-white text-blue-600 shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
+            ]"
+          >
+            歌曲
+          </button>
+          <button
+            type="button"
+            @click="selectSearchType('playlists')"
+            :aria-pressed="searchType === 'playlists'"
+            :class="[
+              'px-3 py-1.5 text-sm font-medium rounded-md transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500',
+              searchType === 'playlists'
+                ? 'bg-white text-blue-600 shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
+            ]"
+          >
+            歌单
+          </button>
         </div>
       </div>
       
@@ -660,7 +726,7 @@ onMounted(() => {
       <!-- Empty state -->
       <EmptyState
         v-else-if="!songs.length && !error && keywords && !loading"
-        :icon="Music"
+        :icon="selectedPlatform === 'netease' && searchType === 'playlists' ? ListMusic : Music"
         title="未找到相关内容"
         description="尝试使用不同的关键词重新搜索"
         action-text="清除搜索条件"
@@ -702,12 +768,52 @@ onMounted(() => {
         <div class="flex items-center justify-between px-1">
           <h3 class="text-lg font-bold text-gray-900">搜索结果</h3>
           <span class="text-sm text-gray-500 bg-gray-100 px-2 py-1 rounded-md font-mono">
-            {{ songs.length }} results
+            {{ songs.length }} 条结果
           </span>
         </div>
-        
+
         <div
-          v-if="selectedPlatform === 'bilibili'"
+          v-if="selectedPlatform === 'netease' && searchType === 'playlists'"
+          class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 px-1"
+        >
+          <RouterLink
+            v-for="playlist in songs"
+            :key="playlist.id"
+            :to="`/playlist/${playlist.id}`"
+            class="group overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-blue-200 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+          >
+            <div class="relative aspect-square overflow-hidden bg-blue-50">
+              <img
+                v-if="playlist.coverImgUrl"
+                :src="playlist.coverImgUrl + '?param=400y400'"
+                :alt="playlist.name"
+                class="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+              />
+              <div v-else class="flex h-full w-full items-center justify-center text-blue-300">
+                <ListMusic :size="48" />
+              </div>
+              <div class="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/70 to-transparent px-4 pb-3 pt-10 text-xs text-white">
+                <span>{{ playlist.trackCount || 0 }} 首</span>
+                <span class="flex items-center gap-1">
+                  <Play :size="12" fill="currentColor" />
+                  {{ formatCompactCount(parseMetricCount(playlist.playCount)) }}
+                </span>
+              </div>
+            </div>
+            <div class="p-4">
+              <h4 class="line-clamp-2 min-h-10 text-sm font-bold leading-5 text-gray-900 transition-colors group-hover:text-blue-600">
+                {{ playlist.name }}
+              </h4>
+              <div class="mt-3 flex items-center gap-2 text-xs text-gray-500">
+                <User :size="14" class="shrink-0" />
+                <span class="truncate">{{ playlist.creator?.nickname || '未知创建者' }}</span>
+              </div>
+            </div>
+          </RouterLink>
+        </div>
+
+        <div
+          v-else-if="selectedPlatform === 'bilibili'"
           class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 px-1"
         >
           <div

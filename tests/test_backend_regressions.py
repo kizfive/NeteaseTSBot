@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
 from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from backend import main
 from backend.db import Base
@@ -86,6 +86,43 @@ class BilibiliAudioCacheTests(unittest.TestCase):
             self.assertEqual(str(requested_path.resolve()), cached)
             self.assertTrue(requested_path.exists())
             self.assertFalse(other_path.exists())
+
+
+class LocalPatchRegressionTests(unittest.IsolatedAsyncioTestCase):
+    def test_bilibili_artwork_uses_backend_proxy(self) -> None:
+        url = main._normalize_bilibili_artwork_url("//i0.hdslb.com/bfs/test.jpg")
+        self.assertEqual(
+            "/api/bilibili/proxy/image?url=https%3A%2F%2Fi0.hdslb.com%2Fbfs%2Ftest.jpg",
+            url,
+        )
+
+    async def test_queue_reorder_changes_ids_and_rejects_partial_payload(self) -> None:
+        engine = create_engine("sqlite://")
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            session.add_all(
+                [
+                    QueueItem(track_id="a", title="A", source_url="a"),
+                    QueueItem(track_id="b", title="B", source_url="b"),
+                    QueueItem(track_id="c", title="C", source_url="c"),
+                ]
+            )
+            session.commit()
+            await main.reorder_queue(main.ReorderRequest(track_ids=[3, 1, 2]), session)
+            rows = session.execute(select(QueueItem).order_by(QueueItem.id)).scalars().all()
+            self.assertEqual(["C", "A", "B"], [row.title for row in rows])
+
+            with self.assertRaises(HTTPException) as raised:
+                await main.reorder_queue(main.ReorderRequest(track_ids=[1, 2]), session)
+            self.assertEqual(400, raised.exception.status_code)
+
+    async def test_netease_playlist_search_uses_playlist_result_type(self) -> None:
+        expected = {"result": {"playlists": [{"id": 1, "name": "测试歌单"}]}}
+        with patch.object(main.netease, "search", new=AsyncMock(return_value=expected)) as search:
+            result = await main.netease_search_playlists("测试", limit=12, offset=24)
+
+        self.assertEqual(expected, result)
+        search.assert_awaited_once_with(keywords="测试", limit=12, offset=24, type_=1000)
 
 
 class AdminCookieStatusTests(unittest.TestCase):
