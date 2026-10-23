@@ -3241,6 +3241,77 @@ async def _search_netease_playlists(
     return _extract_playlist_search_items(raw), _extract_playlist_search_total(raw)
 
 
+def _extract_qqmusic_playlist_search_items(raw: dict) -> list[dict[str, str]]:
+    body = (((raw or {}).get("req") or {}).get("data") or {}).get("body") or {}
+    playlists = (body.get("songlist") or {}).get("list") or []
+    if not isinstance(playlists, list):
+        return []
+
+    items: list[dict[str, str]] = []
+    for playlist in playlists:
+        if not isinstance(playlist, dict):
+            continue
+        playlist_id = str(playlist.get("dissid") or playlist.get("id") or "").strip()
+        if not playlist_id:
+            continue
+        creator = playlist.get("creator") or {}
+        creator_name = (
+            str(creator.get("name") or "").strip()
+            if isinstance(creator, dict)
+            else str(creator).strip()
+        ) or str(playlist.get("nick") or playlist.get("nickname") or "").strip()
+        track_count = str(playlist.get("song_count") or playlist.get("songnum") or "").strip()
+        cover_img_url = str(
+            playlist.get("imgurl")
+            or playlist.get("logo")
+            or playlist.get("dir_pic_url2")
+            or ""
+        ).strip()
+        play_count = str(playlist.get("listennum") or playlist.get("visitnum") or "0").strip()
+        items.append(
+            {
+                "id": playlist_id,
+                "name": str(playlist.get("dissname") or playlist.get("name") or playlist_id).strip(),
+                "creator": creator_name,
+                "track_count": track_count,
+                "cover_img_url": cover_img_url,
+                "play_count": play_count,
+                "description": str(playlist.get("introduction") or playlist.get("desc") or "").strip(),
+            }
+        )
+    return items
+
+
+def _extract_qqmusic_playlist_search_total(raw: dict) -> int:
+    meta = (((raw or {}).get("req") or {}).get("data") or {}).get("meta") or {}
+    value = meta.get("sum") or meta.get("estimate_sum") or 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+async def _search_qqmusic_playlists(
+    keywords: str,
+    *,
+    limit: int = 20,
+    page: int = 1,
+) -> tuple[list[dict[str, str]], int]:
+    """Search QQ Music playlists using the same search API as song search."""
+    safe_limit = max(1, min(int(limit), 50))
+    safe_page = max(1, int(page))
+    raw = await qqmusic.search_with_keyword(
+        keywords,
+        search_type=3,
+        result_num=safe_limit,
+        page_num=safe_page,
+    )
+    return (
+        _extract_qqmusic_playlist_search_items(raw),
+        _extract_qqmusic_playlist_search_total(raw),
+    )
+
+
 def _extract_playlist_tracks(detail: dict) -> tuple[str, list[dict]]:
     playlist = (detail or {}).get("playlist") or {}
     if not isinstance(playlist, dict):
@@ -5409,6 +5480,16 @@ async def qqmusic_search_songs(keywords: str, limit: int = 50, page: int = 1) ->
     try:
         songs = await qqmusic.search_songs_simple(keywords, limit, page)
         return {"songs": songs}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/qqmusic/search/playlists")
+async def qqmusic_search_playlists(keywords: str, limit: int = 20, page: int = 1) -> dict:
+    """QQ音乐歌单搜索（归一化结果）"""
+    try:
+        playlists, total = await _search_qqmusic_playlists(keywords, limit=limit, page=page)
+        return {"playlists": playlists, "total": total}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
