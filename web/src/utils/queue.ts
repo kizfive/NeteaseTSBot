@@ -24,6 +24,24 @@ export type NeteaseTrackLike = {
   coverImgUrl?: string
 }
 
+export type QQMusicTrackLike = {
+  id?: number | string
+  songid?: number | string
+  songmid?: string
+  mid?: string
+  name?: string
+  songname?: string
+  songorig?: string
+  singer?: ArtistLike[]
+  ar?: ArtistLike[]
+  albummid?: string
+  albumname?: string
+  al?: AlbumLike
+  album?: AlbumLike | string
+  dt?: number
+  interval?: number
+}
+
 export type BulkEnqueueResult = {
   addedCount: number
   failed: Array<{
@@ -98,6 +116,85 @@ export async function enqueueNeteaseTracks(
 
     try {
       await apiPost('/queue/netease', buildNeteaseQueuePayload(track, Boolean(options.playFirst && index === 0)))
+      addedCount++
+    } catch (e: any) {
+      failed.push({
+        title,
+        message: String(e?.message ?? e),
+      })
+    }
+  }
+
+  return { addedCount, failed }
+}
+
+function getQQMusicTrackMid(track: QQMusicTrackLike): string {
+  return String(track.songmid || track.mid || '').trim()
+}
+
+function getQQMusicTrackTitle(track: QQMusicTrackLike): string {
+  return String(track.name || track.songname || track.songorig || getQQMusicTrackMid(track) || '未知歌曲')
+}
+
+function getQQMusicTrackArtist(track: QQMusicTrackLike): string {
+  return (track.singer || track.ar || [])
+    .map((artist) => artist.name || '')
+    .filter(Boolean)
+    .join(', ')
+}
+
+function getQQMusicTrackAlbumMid(track: QQMusicTrackLike): string {
+  if (track.albummid) return String(track.albummid)
+  if (track.al?.name && (track.al as any).mid) return String((track.al as any).mid)
+  if (track.album && typeof track.album === 'object' && (track.album as any).mid) {
+    return String((track.album as any).mid)
+  }
+  return ''
+}
+
+function getQQMusicTrackDurationMs(track: QQMusicTrackLike): number | undefined {
+  if (typeof track.dt === 'number' && Number.isFinite(track.dt) && track.dt > 0) {
+    return track.dt
+  }
+  if (typeof track.interval === 'number' && Number.isFinite(track.interval) && track.interval > 0) {
+    return track.interval * 1000
+  }
+  return undefined
+}
+
+export function buildQQMusicQueuePayload(
+  track: QQMusicTrackLike,
+  playNow: boolean = false,
+  quality: string = '320',
+) {
+  return {
+    song_mid: getQQMusicTrackMid(track),
+    title: getQQMusicTrackTitle(track),
+    artist: getQQMusicTrackArtist(track),
+    album_mid: getQQMusicTrackAlbumMid(track),
+    duration_ms: getQQMusicTrackDurationMs(track),
+    quality,
+    play_now: playNow,
+  }
+}
+
+export async function enqueueQQMusicTracks(
+  tracks: QQMusicTrackLike[],
+  options: EnqueueNeteaseTracksOptions = {},
+): Promise<BulkEnqueueResult> {
+  const failed: BulkEnqueueResult['failed'] = []
+  let addedCount = 0
+  const total = tracks.length
+
+  for (const [index, track] of tracks.entries()) {
+    const title = getQQMusicTrackTitle(track)
+    options.onProgress?.(index + 1, total, title)
+
+    try {
+      await apiPost(
+        '/queue/qqmusic',
+        buildQQMusicQueuePayload(track, Boolean(options.playFirst && index === 0)),
+      )
       addedCount++
     } catch (e: any) {
       failed.push({

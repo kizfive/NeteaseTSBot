@@ -162,6 +162,14 @@ async function search(isLoadMore = false) {
       }
 
       hasMore.value = !!res?.has_more
+    } else if (selectedPlatform.value === 'qqmusic' && searchType.value === 'playlists') {
+      const res = await apiGet<{ playlists: any[]; total: number }>(
+        `/qqmusic/search/playlists?keywords=${encodeURIComponent(keywords.value)}&limit=${pageSize.value}&page=${currentPage.value}`,
+      )
+      const newPlaylists = res?.playlists || []
+      songs.value = isLoadMore ? [...songs.value, ...newPlaylists] : newPlaylists
+      hasMore.value =
+        songs.value.length < Number(res?.total || 0) && newPlaylists.length === pageSize.value
     } else if (selectedPlatform.value === 'qqmusic') {
       const res = await apiGet<{ songs: any[] }>(`/qqmusic/search/songs?keywords=${encodeURIComponent(keywords.value)}&limit=${pageSize.value}&page=${currentPage.value}`)
       const newSongs = res?.songs || []
@@ -488,7 +496,9 @@ function getSearchPlaceholder(): string {
     return '搜索B站视频、UP主或关键词...'
   }
   if (selectedPlatform.value === 'qqmusic') {
-    return '搜索QQ音乐歌曲、歌手或专辑...'
+    return searchType.value === 'playlists'
+      ? '搜索QQ音乐歌单名称或创建者...'
+      : '搜索QQ音乐歌曲、歌手或专辑...'
   }
   if (searchType.value === 'playlists') {
     return '搜索网易云歌单名称或创建者...'
@@ -587,9 +597,9 @@ onMounted(() => {
           </div>
         </div>
 
-        <div v-if="selectedPlatform === 'netease'" class="mb-4 flex items-center gap-2">
+        <div v-if="selectedPlatform === 'netease' || selectedPlatform === 'qqmusic'" class="mb-4 flex items-center gap-2">
           <span class="text-sm font-medium text-gray-700">搜索类型:</span>
-          <div class="flex bg-gray-100 rounded-lg p-1" role="group" aria-label="网易云搜索类型">
+          <div class="flex bg-gray-100 rounded-lg p-1" role="group" :aria-label="selectedPlatform === 'qqmusic' ? 'QQ音乐搜索类型' : '网易云搜索类型'">
             <button
               type="button"
               @click="selectSearchType('songs')"
@@ -728,7 +738,7 @@ onMounted(() => {
       <!-- Empty state -->
       <EmptyState
         v-else-if="!songs.length && !error && keywords && !loading"
-        :icon="selectedPlatform === 'netease' && searchType === 'playlists' ? ListMusic : Music"
+        :icon="searchType === 'playlists' && (selectedPlatform === 'netease' || selectedPlatform === 'qqmusic') ? ListMusic : Music"
         title="未找到相关内容"
         description="尝试使用不同的关键词重新搜索"
         action-text="清除搜索条件"
@@ -775,13 +785,13 @@ onMounted(() => {
         </div>
 
         <div
-          v-if="selectedPlatform === 'netease' && searchType === 'playlists'"
+          v-if="searchType === 'playlists' && (selectedPlatform === 'netease' || selectedPlatform === 'qqmusic')"
           class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 px-1"
         >
           <RouterLink
             v-for="playlist in songs"
             :key="playlist.id"
-            :to="`/playlist/${playlist.id}`"
+            :to="selectedPlatform === 'qqmusic' ? `/qqplaylist/${playlist.id}` : `/playlist/${playlist.id}`"
             class="group overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-blue-200 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
           >
             <div class="relative aspect-square overflow-hidden bg-blue-50">

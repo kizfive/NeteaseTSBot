@@ -3,7 +3,7 @@ import { computed, onMounted, ref, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { onBeforeRouteLeave } from 'vue-router'
 import { apiGet } from '../api'
-import { enqueueNeteaseTracks, summarizeBulkEnqueueFailures } from '../utils/queue'
+import { enqueueNeteaseTracks, enqueueQQMusicTracks, summarizeBulkEnqueueFailures } from '../utils/queue'
 import { getFavoritePlaylists, toggleFavoritePlaylist } from '../utils/favorites'
 import { 
   ListMusic, 
@@ -34,6 +34,7 @@ const playlists = ref<any[]>([])
 const highQualityPlaylists = ref<any[]>([])
 const recommendPlaylists = ref<any[]>([])
 const searchKeywords = ref('')
+const searchPlatform = ref<'netease' | 'qqmusic'>('netease')
 const searchResults = ref<any[]>([])
 const searchLoading = ref(false)
 const searchPage = ref(1)
@@ -114,10 +115,13 @@ async function searchPlaylists(loadMore = false) {
 
   try {
     const limit = 24
-    const offset = (searchPage.value - 1) * limit
-    const res = await apiGet<{ playlists: any[]; total: number }>(
-      `/netease/search/playlists?keywords=${encodeURIComponent(keywords)}&limit=${limit}&offset=${offset}`,
-    )
+    const res = searchPlatform.value === 'qqmusic'
+      ? await apiGet<{ playlists: any[]; total: number }>(
+          `/qqmusic/search/playlists?keywords=${encodeURIComponent(keywords)}&limit=${limit}&page=${searchPage.value}`,
+        )
+      : await apiGet<{ playlists: any[]; total: number }>(
+          `/netease/search/playlists?keywords=${encodeURIComponent(keywords)}&limit=${limit}&offset=${(searchPage.value - 1) * limit}`,
+        )
     const items = (res?.playlists || []).map((playlist: any) => ({
       id: playlist.id,
       name: playlist.name,
@@ -125,6 +129,7 @@ async function searchPlaylists(loadMore = false) {
       playCount: Number(playlist.play_count) || 0,
       trackCount: Number(playlist.track_count) || 0,
       creator: { nickname: playlist.creator || '未知创建者' },
+      platform: searchPlatform.value,
     }))
     searchResults.value = loadMore ? [...searchResults.value, ...items] : items
     searchHasMore.value =
@@ -137,6 +142,16 @@ async function searchPlaylists(loadMore = false) {
   }
 }
 
+function selectSearchPlatform(platform: 'netease' | 'qqmusic') {
+  if (searchPlatform.value === platform) return
+  searchPlatform.value = platform
+  searchResults.value = []
+  searchHasMore.value = false
+  searchPage.value = 1
+  error.value = ''
+  if (searchKeywords.value.trim()) void searchPlaylists()
+}
+
 function clearSearch() {
   searchKeywords.value = ''
   searchResults.value = []
@@ -146,9 +161,9 @@ function clearSearch() {
   if (!playlists.value.length) void loadPlaylists(selectedCategory.value)
 }
 
-function goToPlaylist(id: number | string) {
+function goToPlaylist(id: number | string, platform: 'netease' | 'qqmusic' = 'netease') {
   saveState()
-  router.push(`/playlist/${id}`)
+  router.push(platform === 'qqmusic' ? `/qqplaylist/${id}` : `/playlist/${id}`)
 }
 
 function saveState() {
@@ -159,12 +174,13 @@ function saveState() {
     JSON.stringify({
       category: selectedCategory.value,
       query: searchKeywords.value,
+      platform: searchPlatform.value,
       scrollTop: el.scrollTop || 0,
     }),
   )
 }
 
-function loadSavedState(): { category?: string; query?: string; scrollTop?: number } {
+function loadSavedState(): { category?: string; query?: string; platform?: 'netease' | 'qqmusic'; scrollTop?: number } {
   try {
     const raw = sessionStorage.getItem(STATE_KEY)
     if (!raw) return {}
@@ -193,8 +209,9 @@ async function addPlaylistToQueue(playlist: any) {
   status.value = ''
   
   try {
-    const detailRes = await apiGet<any>(`/netease/playlist/${playlist.id}/detail`)
-    const tracks = detailRes?.playlist?.tracks || []
+    const tracks = playlist.platform === 'qqmusic'
+      ? ((await apiGet<{ songs: any[] }>(`/qqmusic/playlist/${playlist.id}/songs`))?.songs || [])
+      : ((await apiGet<any>(`/netease/playlist/${playlist.id}/detail`))?.playlist?.tracks || [])
     
     if (tracks.length === 0) {
       error.value = '歌单为空或无法获取歌曲'
@@ -211,11 +228,14 @@ async function addPlaylistToQueue(playlist: any) {
       return
     }
 
-    const result = await enqueueNeteaseTracks(tracks, {
-      onProgress(current, total, title) {
+    const progress = {
+      onProgress(current: number, total: number, title: string) {
         status.value = `正在添加 ${current}/${total}：${title}`
       },
-    })
+    }
+    const result = playlist.platform === 'qqmusic'
+      ? await enqueueQQMusicTracks(tracks, progress)
+      : await enqueueNeteaseTracks(tracks, progress)
 
     if (result.failed.length > 0) {
       error.value = `有 ${result.failed.length} 首歌曲添加失败：${summarizeBulkEnqueueFailures(result.failed)}`
@@ -247,6 +267,7 @@ onMounted(() => {
     const savedCategory = typeof saved.category === 'string' && saved.category ? saved.category : '全部'
     selectedCategory.value = savedCategory
     searchKeywords.value = typeof saved.query === 'string' ? saved.query : ''
+    searchPlatform.value = saved.platform === 'qqmusic' ? 'qqmusic' : 'netease'
 
     refreshFavoritePlaylistIds()
     await loadCategories()
@@ -279,12 +300,44 @@ onMounted(() => {
         </button>
       </div>
 
+      <div class="mb-2 flex items-center gap-2">
+        <span class="text-sm font-medium text-gray-700">搜索平台:</span>
+        <div class="flex bg-gray-100 rounded-lg p-1" role="group" aria-label="歌单搜索平台">
+          <button
+            type="button"
+            @click="selectSearchPlatform('netease')"
+            :aria-pressed="searchPlatform === 'netease'"
+            :class="[
+              'px-3 py-1 text-sm font-medium rounded-md transition-all duration-200',
+              searchPlatform === 'netease'
+                ? 'bg-white text-blue-600 shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
+            ]"
+          >
+            网易云
+          </button>
+          <button
+            type="button"
+            @click="selectSearchPlatform('qqmusic')"
+            :aria-pressed="searchPlatform === 'qqmusic'"
+            :class="[
+              'px-3 py-1 text-sm font-medium rounded-md transition-all duration-200',
+              searchPlatform === 'qqmusic'
+                ? 'bg-white text-blue-600 shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
+            ]"
+          >
+            QQ音乐
+          </button>
+        </div>
+      </div>
+
       <form class="relative mb-4 max-w-2xl" @submit.prevent="searchPlaylists()">
         <Search :size="18" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
         <input
           v-model="searchKeywords"
           type="search"
-          placeholder="搜索歌单名称或创建者..."
+          :placeholder="searchPlatform === 'qqmusic' ? '搜索QQ音乐歌单名称或创建者...' : '搜索网易云歌单名称或创建者...'"
           class="w-full rounded-xl border border-gray-200 bg-gray-50 py-2.5 pl-10 pr-24 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100"
         />
         <button
@@ -371,7 +424,7 @@ onMounted(() => {
               v-for="playlist in searchResults"
               :key="playlist.id"
               class="group relative flex flex-col gap-3 cursor-pointer"
-              @click="goToPlaylist(playlist.id)"
+              @click="goToPlaylist(playlist.id, playlist.platform)"
             >
               <div class="relative aspect-square rounded-xl overflow-hidden shadow-sm transition-all duration-300 group-hover:shadow-xl group-hover:-translate-y-1">
                 <button
