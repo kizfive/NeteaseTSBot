@@ -143,9 +143,71 @@ export function demoRequest(path: string, init: RequestInit = {}): unknown {
   } else if (route === '/qqmusic/search/songs' && method === 'GET') {
     const keyword = (url.searchParams.get('keywords') || '').toLowerCase()
     result = { songs: catalogue.filter(song => `${song.name} ${song.artist}`.toLowerCase().includes(keyword)).map(song => ({ ...neteaseSong(song), mid: `demo${song.id}`, singer: [{ name: song.artist }], album: { name: song.album }, interval: song.duration })) }
+  } else if (route === '/qqmusic/search/playlists' && method === 'GET') {
+    const keyword = (url.searchParams.get('keywords') || '').toLowerCase()
+    const playlists = catalogue
+      .filter(song => `${song.name} ${song.artist}`.toLowerCase().includes(keyword))
+      .map((song, index) => ({
+        id: String(900 + index),
+        name: `${song.name} · QQ 精选歌单`,
+        creator: 'TSBot Demo',
+        track_count: String(catalogue.length),
+        cover_img_url: cover,
+        play_count: '1280',
+        description: '演示数据，不对应真实 QQ 音乐歌单。',
+      }))
+    result = { playlists, total: playlists.length }
+  } else if (/^\/qqmusic\/playlist\/\d+$/.test(route)) {
+    const id = Number(route.split('/')[3])
+    result = {
+      cdlist: [{
+        dissid: id,
+        dissname: 'QQ 音乐演示歌单',
+        logo: cover,
+        nick: 'TSBot Demo',
+        songnum: catalogue.length,
+        visitnum: 1280,
+        desc: '演示数据，不对应真实 QQ 音乐歌单。',
+        ctime: Math.floor(Date.now() / 1000),
+        songlist: catalogue.map(song => ({
+          songid: song.id,
+          songmid: `demo${song.id}`,
+          songname: song.name,
+          singer: [{ name: song.artist }],
+          albumname: song.album,
+          albummid: `demoalbum${song.id}`,
+          interval: song.duration,
+        })),
+      }],
+    }
+  } else if (/^\/qqmusic\/playlist\/\d+\/songs$/.test(route)) {
+    result = {
+      songs: catalogue.map(song => ({
+        songid: song.id,
+        songmid: `demo${song.id}`,
+        songname: song.name,
+        singer: [{ name: song.artist }],
+        albumname: song.album,
+        albummid: `demoalbum${song.id}`,
+        interval: song.duration,
+      })),
+    }
   } else if (route === '/bilibili/search/videos' && method === 'GET') {
     const keyword = (url.searchParams.get('keywords') || '').toLowerCase()
     result = { items: catalogue.filter(song => `${song.name} ${song.artist}`.toLowerCase().includes(keyword)).map(song => ({ video_id: `BVdemo${song.id}`, title: song.name, artist: song.artist, album: song.album, artwork_url: cover, duration_ms: song.duration * 1000, description: '交互演示数据，不对应真实平台视频。' })), has_more: false }
+  } else if (route === '/netease/search/playlists' && method === 'GET') {
+    const keyword = (url.searchParams.get('keywords') || '').toLowerCase()
+    const playlists = catalogue
+      .filter(song => `${song.name} ${song.artist}`.toLowerCase().includes(keyword))
+      .map((song, index) => ({
+        id: String(800 + index),
+        name: `${song.name} · 网易云精选歌单`,
+        creator: 'TSBot Demo',
+        track_count: String(catalogue.length),
+        cover_img_url: cover,
+        play_count: '1280',
+      }))
+    result = { playlists, total: playlists.length }
   } else if (route === '/netease/search/hot') result = { result: { hots: catalogue.map(song => ({ first: song.name })) } }
   else if (route === '/netease/search/default') result = { data: { showKeyword: '一起听见' } }
   else if (route === '/netease/search/suggest') result = { result: { allMatch: catalogue.map(song => ({ keyword: song.name })) } }

@@ -116,15 +116,6 @@ class LocalPatchRegressionTests(unittest.IsolatedAsyncioTestCase):
                 await main.reorder_queue(main.ReorderRequest(track_ids=[1, 2]), session)
             self.assertEqual(400, raised.exception.status_code)
 
-    async def test_netease_playlist_search_uses_playlist_result_type(self) -> None:
-        expected = {"result": {"playlists": [{"id": 1, "name": "测试歌单"}]}}
-        with patch.object(main.netease, "search", new=AsyncMock(return_value=expected)) as search:
-            result = await main.netease_search_playlists("测试", limit=12, offset=24)
-
-        self.assertEqual(expected, result)
-        search.assert_awaited_once_with(keywords="测试", limit=12, offset=24, type_=1000)
-
-
 class AdminCookieStatusTests(unittest.TestCase):
     def test_encrypted_empty_cookie_is_not_reported_as_configured(self) -> None:
         session = unittest.mock.Mock()
@@ -883,6 +874,146 @@ class VoiceStatusFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["voice_connected"])
         self.assertEqual("idle", result["state"])
         self.assertEqual("", result["now_playing_title"])
+
+
+class NeteasePlaylistSearchTests(unittest.IsolatedAsyncioTestCase):
+    def test_playlist_items_include_fields_needed_by_web_cards(self) -> None:
+        raw = {
+            "result": {
+                "playlists": [
+                    {
+                        "id": 123,
+                        "name": "测试歌单",
+                        "creator": {"nickname": "作者"},
+                        "trackCount": 12,
+                        "coverImgUrl": "https://example.com/cover.jpg",
+                        "playCount": 345,
+                    }
+                ]
+            }
+        }
+
+        items = main._extract_playlist_search_items(raw)
+
+        self.assertEqual(
+            [
+                {
+                    "id": "123",
+                    "name": "测试歌单",
+                    "creator": "作者",
+                    "track_count": "12",
+                    "cover_img_url": "https://example.com/cover.jpg",
+                    "play_count": "345",
+                }
+            ],
+            items,
+        )
+
+    async def test_search_reuses_playlist_result_type_and_returns_total(self) -> None:
+        raw = {
+            "result": {
+                "playlistCount": 42,
+                "playlists": [{"id": 1, "name": "测试歌单"}],
+            }
+        }
+        with patch.object(main.netease, "search", AsyncMock(return_value=raw)) as search:
+            items, total = await main._search_netease_playlists("测试", limit=12, offset=24)
+
+        self.assertEqual("测试歌单", items[0]["name"])
+        self.assertEqual(42, total)
+        search.assert_awaited_once_with(
+            keywords="测试",
+            limit=12,
+            offset=24,
+            type_=1000,
+        )
+
+    async def test_web_endpoint_returns_normalized_payload(self) -> None:
+        with patch.object(
+            main,
+            "_search_netease_playlists",
+            AsyncMock(return_value=([{"id": "1", "name": "测试歌单"}], 1)),
+        ):
+            result = await main.netease_search_playlists("测试", limit=12, offset=0)
+
+        self.assertEqual(
+            {"playlists": [{"id": "1", "name": "测试歌单"}], "total": 1},
+            result,
+        )
+
+
+class QQMusicPlaylistSearchTests(unittest.IsolatedAsyncioTestCase):
+    def _raw(self) -> dict:
+        return {
+            "req": {
+                "data": {
+                    "body": {
+                        "songlist": {
+                            "list": [
+                                {
+                                    "dissid": "7039749142",
+                                    "dissname": "测试歌单",
+                                    "creator": {"name": "作者"},
+                                    "song_count": 99,
+                                    "imgurl": "https://example.com/cover.jpg",
+                                    "listennum": 416150119,
+                                    "introduction": "歌单简介",
+                                }
+                            ]
+                        }
+                    },
+                    "meta": {"sum": 298},
+                }
+            }
+        }
+
+    def test_playlist_items_use_normalized_web_fields(self) -> None:
+        items = main._extract_qqmusic_playlist_search_items(self._raw())
+
+        self.assertEqual(
+            [
+                {
+                    "id": "7039749142",
+                    "name": "测试歌单",
+                    "creator": "作者",
+                    "track_count": "99",
+                    "cover_img_url": "https://example.com/cover.jpg",
+                    "play_count": "416150119",
+                    "description": "歌单简介",
+                }
+            ],
+            items,
+        )
+
+    async def test_search_reuses_playlist_result_type(self) -> None:
+        with patch.object(
+            main.qqmusic,
+            "search_with_keyword",
+            AsyncMock(return_value=self._raw()),
+        ) as search:
+            items, total = await main._search_qqmusic_playlists("周杰伦", limit=12, page=2)
+
+        self.assertEqual("测试歌单", items[0]["name"])
+        self.assertEqual(298, total)
+        search.assert_awaited_once_with(
+            "周杰伦",
+            search_type=3,
+            result_num=12,
+            page_num=2,
+        )
+
+    async def test_web_endpoint_returns_normalized_payload(self) -> None:
+        with patch.object(
+            main,
+            "_search_qqmusic_playlists",
+            AsyncMock(return_value=([{"id": "1", "name": "测试歌单"}], 1)),
+        ):
+            result = await main.qqmusic_search_playlists("测试", limit=12, page=1)
+
+        self.assertEqual(
+            {"playlists": [{"id": "1", "name": "测试歌单"}], "total": 1},
+            result,
+        )
 
 
 if __name__ == "__main__":

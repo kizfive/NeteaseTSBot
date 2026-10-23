@@ -1,8 +1,14 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiGet, apiPost } from '../api'
-import { buildNeteaseQueuePayload, enqueueNeteaseTracks, summarizeBulkEnqueueFailures } from '../utils/queue'
+import {
+  buildNeteaseQueuePayload,
+  buildQQMusicQueuePayload,
+  enqueueNeteaseTracks,
+  enqueueQQMusicTracks,
+  summarizeBulkEnqueueFailures,
+} from '../utils/queue'
 import { 
   ArrowLeft, 
   Play, 
@@ -23,6 +29,9 @@ import { useTransientMessage } from '../composables/useTransientMessage'
 const route = useRoute()
 const router = useRouter()
 const playlistId = route.params.id as string
+const platform = computed<'netease' | 'qqmusic'>(() =>
+  route.path.startsWith('/qqplaylist/') ? 'qqmusic' : 'netease',
+)
 
 const loading = ref(true)
 const error = ref('')
@@ -70,14 +79,48 @@ async function loadPlaylistDetail() {
   error.value = ''
   
   try {
-    const res = await apiGet<any>(`/netease/playlist/${playlistId}/detail`)
-    if (res?.playlist) {
-      playlist.value = res.playlist
-      tracks.value = res.playlist.tracks || []
+    if (platform.value === 'qqmusic') {
+      const [detail, songsRes] = await Promise.all([
+        apiGet<any>(`/qqmusic/playlist/${playlistId}`),
+        apiGet<{ songs: any[] }>(`/qqmusic/playlist/${playlistId}/songs`),
+      ])
+      const cd = (detail?.cdlist || [])[0] || {}
+      const songs = songsRes?.songs || []
+      const coverImgUrl = String(cd.logo || cd.dir_pic_url2 || '').trim()
+
+      tracks.value = songs.map((song: any) => ({
+        id: song.songid || song.songmid,
+        songid: song.songid,
+        songmid: song.songmid,
+        name: song.songname || song.songorig || '',
+        ar: (song.singer || []).map((artist: any) => ({ name: artist?.name || '' })),
+        al: { name: song.albumname || '', picUrl: coverImgUrl },
+        dt: Number(song.interval || 0) * 1000,
+        albummid: song.albummid || '',
+      }))
+      playlist.value = {
+        id: String(cd.dissid || playlistId),
+        name: cd.dissname || 'QQ音乐歌单',
+        coverImgUrl,
+        playCount: Number(cd.visitnum || 0),
+        creator: { nickname: cd.nick || cd.nickname || '' },
+        description: cd.desc || '',
+        createTime: Number(cd.ctime || 0) * 1000,
+        trackCount: Number(cd.songnum || songs.length || 0),
+        platform: 'qqmusic',
+      }
       refreshFavSongs()
       refreshFavPlaylist()
     } else {
-      error.value = '未找到歌单信息'
+      const res = await apiGet<any>(`/netease/playlist/${playlistId}/detail`)
+      if (res?.playlist) {
+        playlist.value = { ...res.playlist, platform: 'netease' }
+        tracks.value = res.playlist.tracks || []
+        refreshFavSongs()
+        refreshFavPlaylist()
+      } else {
+        error.value = '未找到歌单信息'
+      }
     }
   } catch (e: any) {
     error.value = String(e?.message ?? e)
@@ -102,12 +145,19 @@ async function playAll() {
     return
   }
 
-  const result = await enqueueNeteaseTracks(tracks.value, {
-    playFirst: true,
-    onProgress(current, total, title) {
-      status.value = `正在添加 ${current}/${total}：${title}`
-    },
-  })
+  const result = platform.value === 'qqmusic'
+    ? await enqueueQQMusicTracks(tracks.value, {
+        playFirst: true,
+        onProgress(current, total, title) {
+          status.value = `正在添加 ${current}/${total}：${title}`
+        },
+      })
+    : await enqueueNeteaseTracks(tracks.value, {
+      playFirst: true,
+      onProgress(current, total, title) {
+        status.value = `正在添加 ${current}/${total}：${title}`
+      },
+    })
 
   if (result.failed.length > 0) {
     error.value = `有 ${result.failed.length} 首歌曲添加失败：${summarizeBulkEnqueueFailures(result.failed)}`
@@ -121,7 +171,11 @@ async function playAll() {
 
 async function enqueue(track: any, playNow: boolean = false) {
   try {
-    await apiPost('/queue/netease', buildNeteaseQueuePayload(track, playNow))
+    if (platform.value === 'qqmusic') {
+      await apiPost('/queue/qqmusic', buildQQMusicQueuePayload(track, playNow))
+    } else {
+      await apiPost('/queue/netease', buildNeteaseQueuePayload(track, playNow))
+    }
     
     if (!status.value) { // Don't overwrite bulk status
       status.value = `已添加 "${track.name}" 到队列${playNow ? ' (正在播放)' : ''}`

@@ -752,6 +752,7 @@ curl -X POST "http://127.0.0.1:8009/external/queue" \
 | `GET` | `/netease/search/suggest` | 搜索建议 |
 | `GET` | `/netease/search/hot` | 热搜 |
 | `GET` | `/netease/search/default` | 默认搜索词 |
+| `GET` | `/netease/search/playlists` | 按关键词搜索网易云歌单，返回 Web 卡片字段与总数 |
 | `GET` | `/netease/playlist/categories` | 歌单分类 |
 | `GET` | `/netease/playlist/hot` | 热门歌单分类 |
 | `GET` | `/netease/playlist/top` | 网友精选歌单 |
@@ -759,6 +760,16 @@ curl -X POST "http://127.0.0.1:8009/external/queue" \
 | `GET` | `/netease/playlist/{playlist_id}/detail` | 歌单详情 |
 | `GET` | `/netease/song/{song_id}/lyric` | 歌词 |
 | `GET` | `/netease/recommend/playlists` | 推荐歌单 |
+
+`/netease/search/playlists` 参数：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `keywords` | string | 歌单名称或创建者关键词 |
+| `limit` | integer | 默认 `20`，最大 `50` |
+| `offset` | integer | 默认 `0` |
+
+响应中的 `playlists` 已归一化为 `id`、`name`、`creator`、`track_count`、`cover_img_url`、`play_count`，并附带 `total`。该接口与 TeamSpeak 聊天指令 `歌单 <关键词>` 共用同一套网易云歌单搜索逻辑。
 
 `/netease/playlist/top` 支持参数：
 
@@ -832,6 +843,7 @@ curl -X POST "http://127.0.0.1:8009/external/queue" \
 | --- | --- | --- |
 | `GET` | `/qqmusic/search` | 完整搜索接口 |
 | `GET` | `/qqmusic/search/songs` | 简化歌曲搜索 |
+| `GET` | `/qqmusic/search/playlists` | 按关键词搜索 QQ 音乐歌单，返回 Web 卡片字段与总数 |
 | `GET` | `/qqmusic/song/{song_mid}/url` | 获取播放 URL |
 | `GET` | `/qqmusic/song/{song_mid}/lyric` | 获取歌词 |
 | `GET` | `/qqmusic/playlist/{playlist_id}` | 歌单详情 |
@@ -852,8 +864,13 @@ curl -X POST "http://127.0.0.1:8009/external/queue" \
 | `/qqmusic/search` | `limit` | 默认 `50` |
 | `/qqmusic/search` | `page` | 默认 `1` |
 | `/qqmusic/search/songs` | `keywords` | 搜索词 |
+| `/qqmusic/search/playlists` | `keywords` | 歌单名称或创建者关键词 |
+| `/qqmusic/search/playlists` | `limit` | 默认 `20`，最大 `50` |
+| `/qqmusic/search/playlists` | `page` | 默认 `1` |
 | `/qqmusic/song/{song_mid}/url` | `quality` | 默认 `320` |
 | `/qqmusic/song/{song_mid}/lyric` | `parse` | `true` 时返回解析后的结构 |
+
+`/qqmusic/search/playlists` 返回的 `playlists` 已归一化为 `id`、`name`、`creator`、`track_count`、`cover_img_url`、`play_count`、`description`，并附带 `total`。该接口复用 `search_type=3` 的 QQ 音乐搜索能力。
 
 ### 10.2 登录与用户态接口
 

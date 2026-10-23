@@ -3198,15 +3198,123 @@ def _extract_playlist_search_items(raw: dict) -> list[dict[str, str]]:
             else str(creator).strip()
         ) or str(playlist.get("creatorName") or "").strip()
         track_count = str(playlist.get("trackCount") or playlist.get("track_count") or "").strip()
+        cover_img_url = str(
+            playlist.get("coverImgUrl")
+            or playlist.get("cover_img_url")
+            or playlist.get("picUrl")
+            or ""
+        ).strip()
+        play_count = str(playlist.get("playCount") or playlist.get("play_count") or "0").strip()
         items.append(
             {
                 "id": playlist_id,
                 "name": str(playlist.get("name") or playlist_id).strip(),
                 "creator": creator_name,
                 "track_count": track_count,
+                "cover_img_url": cover_img_url,
+                "play_count": play_count,
             }
         )
     return items
+
+
+def _extract_playlist_search_total(raw: dict) -> int:
+    value = (((raw or {}).get("result") or {}).get("playlistCount") or 0)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+async def _search_netease_playlists(
+    keywords: str,
+    *,
+    limit: int = 20,
+    offset: int = 0,
+) -> tuple[list[dict[str, str]], int]:
+    """Search Netease playlists using the same API path as the TS playlist command."""
+    safe_limit = max(1, min(int(limit), 50))
+    safe_offset = max(0, int(offset))
+    params: dict[str, object] = {
+        "keywords": keywords,
+        "limit": safe_limit,
+        "type_": 1000,
+    }
+    if safe_offset:
+        params["offset"] = safe_offset
+    raw = await netease.search(**params)
+    return _extract_playlist_search_items(raw), _extract_playlist_search_total(raw)
+
+
+def _extract_qqmusic_playlist_search_items(raw: dict) -> list[dict[str, str]]:
+    body = (((raw or {}).get("req") or {}).get("data") or {}).get("body") or {}
+    playlists = (body.get("songlist") or {}).get("list") or []
+    if not isinstance(playlists, list):
+        return []
+
+    items: list[dict[str, str]] = []
+    for playlist in playlists:
+        if not isinstance(playlist, dict):
+            continue
+        playlist_id = str(playlist.get("dissid") or playlist.get("id") or "").strip()
+        if not playlist_id:
+            continue
+        creator = playlist.get("creator") or {}
+        creator_name = (
+            str(creator.get("name") or "").strip()
+            if isinstance(creator, dict)
+            else str(creator).strip()
+        ) or str(playlist.get("nick") or playlist.get("nickname") or "").strip()
+        track_count = str(playlist.get("song_count") or playlist.get("songnum") or "").strip()
+        cover_img_url = str(
+            playlist.get("imgurl")
+            or playlist.get("logo")
+            or playlist.get("dir_pic_url2")
+            or ""
+        ).strip()
+        play_count = str(playlist.get("listennum") or playlist.get("visitnum") or "0").strip()
+        items.append(
+            {
+                "id": playlist_id,
+                "name": str(playlist.get("dissname") or playlist.get("name") or playlist_id).strip(),
+                "creator": creator_name,
+                "track_count": track_count,
+                "cover_img_url": cover_img_url,
+                "play_count": play_count,
+                "description": str(playlist.get("introduction") or playlist.get("desc") or "").strip(),
+            }
+        )
+    return items
+
+
+def _extract_qqmusic_playlist_search_total(raw: dict) -> int:
+    meta = (((raw or {}).get("req") or {}).get("data") or {}).get("meta") or {}
+    value = meta.get("sum") or meta.get("estimate_sum") or 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+async def _search_qqmusic_playlists(
+    keywords: str,
+    *,
+    limit: int = 20,
+    page: int = 1,
+) -> tuple[list[dict[str, str]], int]:
+    """Search QQ Music playlists using the same search API as song search."""
+    safe_limit = max(1, min(int(limit), 50))
+    safe_page = max(1, int(page))
+    raw = await qqmusic.search_with_keyword(
+        keywords,
+        search_type=3,
+        result_num=safe_limit,
+        page_num=safe_page,
+    )
+    return (
+        _extract_qqmusic_playlist_search_items(raw),
+        _extract_qqmusic_playlist_search_total(raw),
+    )
 
 
 def _extract_playlist_tracks(detail: dict) -> tuple[str, list[dict]]:
@@ -3703,8 +3811,7 @@ async def _handle_chat_command(
             if not arg:
                 await reply("用法: playlist <歌单关键词>")
                 return
-            raw = await netease.search(keywords=arg, limit=5, type_=1000)
-            playlists = _extract_playlist_search_items(raw)
+            playlists, _ = await _search_netease_playlists(arg, limit=5)
             if not playlists:
                 await reply("没有找到网易云歌单")
                 return
@@ -5249,7 +5356,11 @@ async def external_replay_history(
 
 @app.get("/netease/search/playlists")
 async def netease_search_playlists(keywords: str, limit: int = 20, offset: int = 0) -> dict:
-    return await netease.search(keywords=keywords, limit=limit, offset=offset, type_=1000)
+    try:
+        playlists, total = await _search_netease_playlists(keywords, limit=limit, offset=offset)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    return {"playlists": playlists, "total": total}
 
 
 @app.get("/netease/search/suggest")
@@ -5438,6 +5549,16 @@ async def qqmusic_search_songs(keywords: str, limit: int = 50, page: int = 1) ->
     try:
         songs = await qqmusic.search_songs_simple(keywords, limit, page)
         return {"songs": songs}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/qqmusic/search/playlists")
+async def qqmusic_search_playlists(keywords: str, limit: int = 20, page: int = 1) -> dict:
+    """QQ音乐歌单搜索（归一化结果）"""
+    try:
+        playlists, total = await _search_qqmusic_playlists(keywords, limit=limit, page=page)
+        return {"playlists": playlists, "total": total}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -3,7 +3,7 @@ import { computed, onMounted, ref, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { onBeforeRouteLeave } from 'vue-router'
 import { apiGet } from '../api'
-import { enqueueNeteaseTracks, summarizeBulkEnqueueFailures } from '../utils/queue'
+import { enqueueNeteaseTracks, enqueueQQMusicTracks, summarizeBulkEnqueueFailures } from '../utils/queue'
 import { getFavoritePlaylists, toggleFavoritePlaylist } from '../utils/favorites'
 import { 
   ListMusic, 
@@ -34,6 +34,7 @@ const playlists = ref<any[]>([])
 const highQualityPlaylists = ref<any[]>([])
 const recommendPlaylists = ref<any[]>([])
 const searchKeywords = ref('')
+const searchPlatform = ref<'netease' | 'qqmusic'>('netease')
 const searchResults = ref<any[]>([])
 const searchLoading = ref(false)
 const searchPage = ref(1)
@@ -114,11 +115,25 @@ async function searchPlaylists(loadMore = false) {
 
   try {
     const limit = 24
-    const offset = (searchPage.value - 1) * limit
-    const res = await apiGet<any>(`/netease/search/playlists?keywords=${encodeURIComponent(keywords)}&limit=${limit}&offset=${offset}`)
-    const items = res?.result?.playlists || []
+    const res = searchPlatform.value === 'qqmusic'
+      ? await apiGet<{ playlists: any[]; total: number }>(
+          `/qqmusic/search/playlists?keywords=${encodeURIComponent(keywords)}&limit=${limit}&page=${searchPage.value}`,
+        )
+      : await apiGet<{ playlists: any[]; total: number }>(
+          `/netease/search/playlists?keywords=${encodeURIComponent(keywords)}&limit=${limit}&offset=${(searchPage.value - 1) * limit}`,
+        )
+    const items = (res?.playlists || []).map((playlist: any) => ({
+      id: playlist.id,
+      name: playlist.name,
+      coverImgUrl: playlist.cover_img_url,
+      playCount: Number(playlist.play_count) || 0,
+      trackCount: Number(playlist.track_count) || 0,
+      creator: { nickname: playlist.creator || '未知创建者' },
+      platform: searchPlatform.value,
+    }))
     searchResults.value = loadMore ? [...searchResults.value, ...items] : items
-    searchHasMore.value = searchResults.value.length < (res?.result?.playlistCount || 0) && items.length === limit
+    searchHasMore.value =
+      searchResults.value.length < Number(res?.total || 0) && items.length === limit
   } catch (e: any) {
     if (loadMore) searchPage.value -= 1
     error.value = String(e?.message ?? e)
@@ -127,17 +142,28 @@ async function searchPlaylists(loadMore = false) {
   }
 }
 
+function selectSearchPlatform(platform: 'netease' | 'qqmusic') {
+  if (searchPlatform.value === platform) return
+  searchPlatform.value = platform
+  searchResults.value = []
+  searchHasMore.value = false
+  searchPage.value = 1
+  error.value = ''
+  if (searchKeywords.value.trim()) void searchPlaylists()
+}
+
 function clearSearch() {
   searchKeywords.value = ''
   searchResults.value = []
   searchHasMore.value = false
   searchPage.value = 1
   error.value = ''
+  if (!playlists.value.length) void loadPlaylists(selectedCategory.value)
 }
 
-function goToPlaylist(id: number | string) {
+function goToPlaylist(id: number | string, platform: 'netease' | 'qqmusic' = 'netease') {
   saveState()
-  router.push(`/playlist/${id}`)
+  router.push(platform === 'qqmusic' ? `/qqplaylist/${id}` : `/playlist/${id}`)
 }
 
 function saveState() {
@@ -148,12 +174,13 @@ function saveState() {
     JSON.stringify({
       category: selectedCategory.value,
       query: searchKeywords.value,
+      platform: searchPlatform.value,
       scrollTop: el.scrollTop || 0,
     }),
   )
 }
 
-function loadSavedState(): { category?: string; query?: string; scrollTop?: number } {
+function loadSavedState(): { category?: string; query?: string; platform?: 'netease' | 'qqmusic'; scrollTop?: number } {
   try {
     const raw = sessionStorage.getItem(STATE_KEY)
     if (!raw) return {}
@@ -182,8 +209,9 @@ async function addPlaylistToQueue(playlist: any) {
   status.value = ''
   
   try {
-    const detailRes = await apiGet<any>(`/netease/playlist/${playlist.id}/detail`)
-    const tracks = detailRes?.playlist?.tracks || []
+    const tracks = playlist.platform === 'qqmusic'
+      ? ((await apiGet<{ songs: any[] }>(`/qqmusic/playlist/${playlist.id}/songs`))?.songs || [])
+      : ((await apiGet<any>(`/netease/playlist/${playlist.id}/detail`))?.playlist?.tracks || [])
     
     if (tracks.length === 0) {
       error.value = '歌单为空或无法获取歌曲'
@@ -200,11 +228,14 @@ async function addPlaylistToQueue(playlist: any) {
       return
     }
 
-    const result = await enqueueNeteaseTracks(tracks, {
-      onProgress(current, total, title) {
+    const progress = {
+      onProgress(current: number, total: number, title: string) {
         status.value = `正在添加 ${current}/${total}：${title}`
       },
-    })
+    }
+    const result = playlist.platform === 'qqmusic'
+      ? await enqueueQQMusicTracks(tracks, progress)
+      : await enqueueNeteaseTracks(tracks, progress)
 
     if (result.failed.length > 0) {
       error.value = `有 ${result.failed.length} 首歌曲添加失败：${summarizeBulkEnqueueFailures(result.failed)}`
@@ -236,6 +267,7 @@ onMounted(() => {
     const savedCategory = typeof saved.category === 'string' && saved.category ? saved.category : '全部'
     selectedCategory.value = savedCategory
     searchKeywords.value = typeof saved.query === 'string' ? saved.query : ''
+    searchPlatform.value = saved.platform === 'qqmusic' ? 'qqmusic' : 'netease'
 
     refreshFavoritePlaylistIds()
     await loadCategories()
@@ -268,12 +300,44 @@ onMounted(() => {
         </button>
       </div>
 
+      <div class="mb-2 flex items-center gap-2">
+        <span class="text-sm font-medium text-gray-700">搜索平台:</span>
+        <div class="flex bg-gray-100 rounded-lg p-1" role="group" aria-label="歌单搜索平台">
+          <button
+            type="button"
+            @click="selectSearchPlatform('netease')"
+            :aria-pressed="searchPlatform === 'netease'"
+            :class="[
+              'px-3 py-1 text-sm font-medium rounded-md transition-all duration-200',
+              searchPlatform === 'netease'
+                ? 'bg-white text-blue-600 shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
+            ]"
+          >
+            网易云
+          </button>
+          <button
+            type="button"
+            @click="selectSearchPlatform('qqmusic')"
+            :aria-pressed="searchPlatform === 'qqmusic'"
+            :class="[
+              'px-3 py-1 text-sm font-medium rounded-md transition-all duration-200',
+              searchPlatform === 'qqmusic'
+                ? 'bg-white text-blue-600 shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
+            ]"
+          >
+            QQ音乐
+          </button>
+        </div>
+      </div>
+
       <form class="relative mb-4 max-w-2xl" @submit.prevent="searchPlaylists()">
         <Search :size="18" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
         <input
           v-model="searchKeywords"
           type="search"
-          placeholder="搜索歌单名称或创建者..."
+          :placeholder="searchPlatform === 'qqmusic' ? '搜索QQ音乐歌单名称或创建者...' : '搜索网易云歌单名称或创建者...'"
           class="w-full rounded-xl border border-gray-200 bg-gray-50 py-2.5 pl-10 pr-24 text-sm text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100"
         />
         <button
@@ -355,37 +419,48 @@ onMounted(() => {
             <span class="text-sm text-gray-500">{{ searchResults.length }} 个歌单</span>
           </div>
 
-          <div v-if="searchResults.length" class="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 md:grid-cols-4 md:gap-6 lg:grid-cols-5 xl:grid-cols-6">
+          <div v-if="searchResults.length" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4 md:gap-6">
             <div
               v-for="playlist in searchResults"
               :key="playlist.id"
-              class="group relative flex cursor-pointer flex-col gap-3"
-              tabindex="0"
-              @click="goToPlaylist(playlist.id)"
-              @keydown.enter="goToPlaylist(playlist.id)"
+              class="group relative flex flex-col gap-3 cursor-pointer"
+              @click="goToPlaylist(playlist.id, playlist.platform)"
             >
-              <div class="relative aspect-square overflow-hidden rounded-xl shadow-sm transition-all duration-300 group-hover:-translate-y-1 group-hover:shadow-xl">
+              <div class="relative aspect-square rounded-xl overflow-hidden shadow-sm transition-all duration-300 group-hover:shadow-xl group-hover:-translate-y-1">
                 <button
-                  class="absolute left-2 top-2 z-10 rounded-full bg-black/40 p-1.5 text-white/90 backdrop-blur-md transition-colors hover:bg-pink-50 hover:text-pink-600"
-                  :class="{ 'bg-pink-50 text-pink-600': isLocalFavPlaylist(playlist.id) }"
-                  :title="isLocalFavPlaylist(playlist.id) ? '取消本地收藏' : '本地收藏'"
+                  class="absolute top-2 left-2 z-10 p-1.5 rounded-full backdrop-blur-md transition-colors"
+                  :class="isLocalFavPlaylist(playlist.id) ? 'bg-pink-50 text-pink-600' : 'bg-black/40 text-white/90 hover:bg-pink-50 hover:text-pink-600'"
                   @click.stop="toggleLocalFavPlaylist({ id: playlist.id, name: playlist.name, coverImgUrl: playlist.coverImgUrl, playCount: playlist.playCount, creator: playlist.creator })"
+                  :title="isLocalFavPlaylist(playlist.id) ? '取消本地收藏' : '本地收藏'"
                 >
                   <Heart :size="14" :fill="isLocalFavPlaylist(playlist.id) ? 'currentColor' : 'none'" />
                 </button>
-                <img :src="playlist.coverImgUrl + '?param=300y300'" :alt="playlist.name" class="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
-                <div class="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-[10px] text-white backdrop-blur-md">
+                <img
+                  :src="playlist.coverImgUrl + '?param=300y300'"
+                  :alt="playlist.name"
+                  class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                />
+                <div class="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center backdrop-blur-[2px]">
+                  <div
+                    class="w-12 h-12 bg-white/90 rounded-full flex items-center justify-center text-blue-600 shadow-lg transform scale-50 group-hover:scale-100 transition-transform duration-300 hover:bg-white hover:scale-110"
+                    @click.stop="addPlaylistToQueue(playlist)"
+                    title="添加到播放队列"
+                  >
+                    <Play :size="24" fill="currentColor" class="ml-1" />
+                  </div>
+                </div>
+                <div class="absolute top-2 right-2 bg-black/60 backdrop-blur-md text-white text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1">
                   <Play :size="10" fill="currentColor" />
-                  {{ formatPlayCount(playlist.playCount || 0) }}
+                  {{ formatPlayCount(playlist.playCount) }}
                 </div>
               </div>
               <div class="min-w-0">
-                <h3 class="mb-1 line-clamp-2 text-sm font-bold leading-snug text-gray-900 transition-colors group-hover:text-blue-600" :title="playlist.name">
+                <h3 class="font-bold text-gray-900 text-sm line-clamp-2 leading-snug group-hover:text-blue-600 transition-colors mb-1" :title="playlist.name">
                   {{ playlist.name }}
                 </h3>
-                <p class="flex items-center gap-1 truncate text-xs text-gray-500">
+                <p class="text-xs text-gray-500 flex items-center gap-1 truncate">
                   <User :size="12" />
-                  {{ playlist.creator?.nickname || '未知创建者' }} · {{ playlist.trackCount || 0 }} 首
+                  {{ playlist.creator?.nickname }} · {{ playlist.trackCount }} 首
                 </p>
               </div>
             </div>

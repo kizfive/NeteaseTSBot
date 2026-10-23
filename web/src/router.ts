@@ -22,6 +22,7 @@ export const router = createRouter({
     { path: '/favorites', component: FavoritesView },
     { path: '/playlists', component: PlaylistsView },
     { path: '/playlist/:id', component: PlaylistDetailView },
+    { path: '/qqplaylist/:id', component: PlaylistDetailView },
     { path: '/queue', component: QueueView },
     { path: '/history', component: HistoryView },
     { path: '/login', name: 'login', component: LoginView, meta: { authPage: true } },
